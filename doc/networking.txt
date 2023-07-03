@@ -1,0 +1,52 @@
+
+// -------------------------------------------------------------------
+// --------------------------- Byte Order ----------------------------
+// -------------------------------------------------------------------
+
+// The network uses BigEndian byte order. The host byte order might vary.
+// Therefore all meta/header data in and out should be converted:
+- htons() 	host to network short
+- htonl() 	host to network long
+- ntohs() 	network to host short
+- ntohl() 	network to host long
+
+// -------------------------------------------------------------------
+// -------------------------- Unix Structs ---------------------------
+// -------------------------------------------------------------------
+
+struct addrinfo         // New struct, filled by getaddrinfo() and can handle IPv4 and IPv6 dynamically
+struct sockaddr         // Basic addr struct that holds the full address data (prot, addr) in one array. Very user un-friendly
+struct sockaddr_in      // IPv4: struct sockaddr pointer can directly be casted to a sockaddr_in which is much easier to use
+struct sockaddr_in6     // IPv6 struct to store port, addr, flow and scope info (not directly convertable to a basic sockaddr!)
+struct sockaddr_storage // Similar to sockaddr but larger and works for IPv4 and IPv6 (can be cast as sockaddr_in or sockaddr_in6!)
+
+struct in_addr          // Simple struct to store one 4-Bype IPv4 address
+struct in6_addr         // Simple struct to store one 16-Byte IPv6 address
+
+// -------------------------------------------------------------------
+// ----------------------- IP Addr conversion ------------------------
+// -------------------------------------------------------------------
+
+// Convert strings to address structs (fill in_addr or in6_addr)
+// The old functions inet_addr() and inet_aton() are now obsolete due to IPv6
+// (“pton” stands for “presentation to network” or “printable to network”)
+
+struct sockaddr_in sa; // IPv4
+struct sockaddr_in6 sa6; // IPv6
+
+// inet_pton returns -1 on error, or 0 if the address is messed up - result must be > 0
+inet_pton(AF_INET,  "10.12.110.57", &(sa.sin_addr)); // IPv4
+inet_pton(AF_INET6, "2001:db8:63b3:1::3490", &(sa6.sin6_addr)); // IPv6
+
+// Convert address structs to strings
+// The old function inet_ntoa() is now obsolete due to IPv6
+
+// IPv4:
+char ip4[INET_ADDRSTRLEN];  // space to hold the IPv4 string
+struct sockaddr_in sa;      // pretend this is loaded with something
+inet_ntop(AF_INET, &(sa.sin_addr), ip4, INET_ADDRSTRLEN);
+
+// IPv6:
+char ip6[INET6_ADDRSTRLEN]; // space to hold the IPv6 string
+struct sockaddr_in6 sa6;    // pretend this is loaded with something
+inet_ntop(AF_INET6, &(sa6.sin6_addr), ip6, INET6_ADDRSTRLEN);
