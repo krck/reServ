@@ -1,0 +1,55 @@
+Here are the general steps to create a WebSocket-based chat application in C++:
+
+    Establish a TCP connection:
+        Create a socket using the socket system call.
+        Bind the socket to a specific IP address and port using the bind system call.
+        Start listening for incoming connections using the listen system call.
+        Accept incoming client connections using the accept system call.
+
+    Perform the WebSocket handshake:
+        Receive the initial HTTP handshake request from the client.
+        Parse the request to extract important information like the WebSocket key.
+        Generate the WebSocket handshake response and send it back to the client.
+
+    Handle WebSocket communication:
+        Read WebSocket frames from the client.
+        Parse the frames to determine the message type (e.g., text, binary, close).
+        Take appropriate action based on the message type.
+        Send WebSocket frames to the client.
+
+    Implement the chat functionality:
+        Maintain a list of connected clients.
+        Handle client connections and disconnections.
+        Broadcast received messages to all connected clients.
+        Handle any other desired chat features like private messaging or nicknames.
+
+
+
+1. TCP Connection
+    - The TCP Connection is a Layer 4 Protocoll - operates on the Transport Layer
+    - On opening a TCP Connection there is a SYN-SYN/ACK-ACK package handshake between Server and Client
+    - Once opened, the TCP Connection is "duplex" meaning both Server and Client can send and recieve (talk at the same time)
+
+2. HTTP/HTTPS Connection
+    - The HTTP Protocol uses a established TCP Connection to send its Requests/Responses
+    - HTTP allows communication only in one direction (Client send Request, Server sends Response - or the other way round)
+        - This is by design (even tho it seems like losing a Feature when going from "duplex TCP" up the stack to "simplex HTTP")
+        - This allows HTTP to be "stateless". HTTP always sends the full header information on every Request, so the Server does not need to keep track
+    - After every Request/Respone the HTTP connection is closed again (but the TCP Connection can stay open - "keep alive")
+
+3. WebSocket Connection
+    - The WebSocket Protocol also uses a established TCP Connection to send and recieve
+    - The WebSocket Connection uses a initial HTTP Request/Response to "upgrade" the HTTP Connection to a WebSocket Connection, between Client and Server
+    - Once the Connection is upgraded from HTTP to WebSocket, the communication is "duplex" again. (Duplex TCP + Duplex WebSocket)
+        - This makes WebSocket a state-full connection again (upgrade form HTTP state-less)
+        - HTTP is like sending a Letter and waiting for the Server to reply to this one Letter
+        - WebSocket is like a Phone call with a open line where both sides can talk at will
+
+- Client establishes a "state-full" and "duplex" TCP Connection
+- Client uses the "state-less" and "simplex" HTTP Connection on top of the TCP Connection to establish a WebSocket Connection
+- Once upgraded, a "state-full" and "duplex" WebSocket connection is open ontop of the TCP Connection between Server and Client
+
+
+Here is a great Socket Guide:
+https://beej.us/guide/bgnet/html/#intro
+
