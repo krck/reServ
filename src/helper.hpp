@@ -27,13 +27,30 @@ std::string extractIpAddrString(sockaddr_storage* addr) {
 }
 
 //
-// Check if the request contains the necessary headers for WebSocket upgrade
+// Check if the request contains the necessary headers for a WebSocket upgrade
 // (Convert string to lower and then compare with different "connection" configurations)
 //
-inline bool isWebSocketUpgradeRequest(std::string req) {
+bool isWebSocketUpgradeRequest(std::string req) {
     std::transform(req.begin(), req.end(), req.begin(), [](unsigned char c) { return std::tolower(c); });
     return ((req.find("upgrade: websocket") != std::string::npos && req.find("connection: upgrade") != std::string::npos)
             || (req.find("upgrade: websocket") != std::string::npos && req.find("connection: keep-alive, upgrade") != std::string::npos));
+}
+
+//
+// Check if the request contains any HTTP Method
+// (The comparison "rfind("",0) == 0" is equal to a "string start with")
+//
+bool isHttpRequest(const std::string& req) {
+    return (
+        (req.rfind("GET", 0) == 0
+         || req.rfind("POST", 0) == 0
+         || req.rfind("PUT", 0) == 0
+         || req.rfind("DELETE", 0) == 0
+         || req.rfind("CONNECT", 0) == 0
+         || req.rfind("HEAD", 0) == 0
+         || req.rfind("OPTIONS", 0) == 0
+         || req.rfind("TRACE", 0) == 0)
+        && req.find("HTTP") != std::string::npos);
 }
 
 }  // namespace reServ

@@ -15,14 +15,20 @@ namespace reServ {
 
 class Connection {
 public:
-    Connection(int clientSocket, std::string clientIp) : _clientSocketfd(clientSocket), _clientIp(clientIp), _logger(Logger::instance()) {}
+    Connection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
+        : _clientSocketfd(clientSocketfd), _clientAddr(clientAddr), _clientAddrStr(clientAddrStr), _logger(Logger::instance()) {}
 
 public:
-    virtual bool handleConnection(const std::string& req) = 0;
+    virtual bool handleRequest(const std::string& req) = 0;
+
+    inline std::string getAddress() const { return _clientAddrStr; }
+
+    virtual ~Connection() = default;
 
 protected:
     const int _clientSocketfd;
-    const std::string _clientIp;
+    const sockaddr_storage _clientAddr;
+    const std::string _clientAddrStr;
     // Connection Utility
     Logger& _logger;
 };
@@ -35,10 +41,11 @@ protected:
 
 class HttpConnection : public Connection {
 public:
-    HttpConnection(int clientSocket, std::string clientIp) : Connection(clientSocket, clientIp) {}
+    HttpConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
+        : Connection(clientSocketfd, clientAddr, clientAddrStr) {}
 
 public:
-    bool handleConnection(const std::string& req) override {
+    bool handleRequest(const std::string& req) override {
         try {
             // -------------------------------------------------------
             // Here could be any HTTP Server Logic:
@@ -53,13 +60,14 @@ public:
             // (Versiopn, Status, Content-Type and some Content)
             const char* res = "HTTP/1.1 501 Not Implemented\n"
                               "Content-Type: text/plain\n"
+                              //"Access-Control-Allow-Origin: *\n"
                               "Connection: close\t\n"
                               "Content-Length: 34\n\n"
                               "WebSocket Server - no HTTP support";
 
             ssize_t bytesWritten = send(_clientSocketfd, res, std::strlen(res), 0);
             if(bytesWritten < 0)
-                _logger.log(LogLevel::Warning, "Could not write to Client: " + _clientIp);
+                _logger.log(LogLevel::Warning, "Could not write to Client: " + _clientAddrStr);
 
             return true;
         } catch(const std::exception& e) {
@@ -77,10 +85,26 @@ public:
 
 class WebSocketConnection : public Connection {
 public:
-    WebSocketConnection(int clientSocket, std::string clientIp) : Connection(clientSocket, clientIp) {}
+    WebSocketConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
+        : Connection(clientSocketfd, clientAddr, clientAddrStr) {}
 
 public:
-    bool handleConnection(const std::string& req) override {
+    // bool handleHandshake(const std::string& req) override {
+    //     // Upgrade the connection to WebSocket and send the upgrade response to the client
+    //     std::string response = "HTTP/1.1 101 Switching Protocols\r\n";
+    //     response += "Upgrade: websocket\r\n";
+    //     response += "Connection: Upgrade\r\n";
+    //     response += "Sec-WebSocket-Accept: <websocket key>\r\n";
+    //     response += "\r\n";
+
+    //     ssize_t bytesWritten = send(_clientSocketfd, response.c_str(), response.length(), 0);
+    //     if(bytesWritten < 0)
+    //         return false;
+
+    //     return true;
+    // }
+
+    bool handleRequest(const std::string& req) override {
         try {
             // Perform WebSocket handshake
             // if(performWebSocketHandshake(req)) {
@@ -199,6 +223,7 @@ public:
     }
 
 private:
+    /*
     bool performWebSocketHandshake(const std::string& request) {
         // // Extract the WebSocket key from the request
         // std::string key;
@@ -264,6 +289,7 @@ private:
         //     }
         // }
     }
+    */
 };
 
 }  // namespace reServ
