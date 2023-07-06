@@ -49,26 +49,26 @@ public:
         try {
             // -------------------------------------------------------
             // Here could be any HTTP Server Logic:
-            // - Parse request Type (GET, POST, PUT, DELETE)
+            // - Parse request Method (GET, POST, PUT, DELETE)
             // - Parse request Content (text, json, html, file, ...)
             // - Create a Server response, based on the Client request
             // -------------------------------------------------------
 
-            // But, since its a WebSocket only Server:
-            // In case the incoming data is not a "WebSocket upgrade request"
-            // just send a minimal HTTP 1.1 response and close the connection
-            // (Versiopn, Status, Content-Type and some Content)
+            // In case the incoming data is not a HTTP "WebSocket upgrade request"
+            // just send a minimal HTTP 1.1 response 501 and close the connection
+            // (Version, Status, Content-Type, CORS* and some Content)
             const char* res = "HTTP/1.1 501 Not Implemented\n"
                               "Content-Type: text/plain\n"
-                              //"Access-Control-Allow-Origin: *\n"
+                              "Access-Control-Allow-Origin: *\n"
                               "Connection: close\t\n"
                               "Content-Length: 34\n\n"
                               "WebSocket Server - no HTTP support";
 
             ssize_t bytesWritten = send(_clientSocketfd, res, std::strlen(res), 0);
-            if(bytesWritten < 0)
+            if(bytesWritten < 0) {
                 _logger.log(LogLevel::Warning, "Could not write to Client: " + _clientAddrStr);
-
+                return false;
+            }
             return true;
         } catch(const std::exception& e) {
             _logger.log(LogLevel::Error, "HTTP Connection: " + std::string(e.what()));
@@ -275,19 +275,6 @@ private:
         // Base64-encode the SHA-1 hash to acceptKey here (not shown)
 
         return acceptKey;
-    }
-
-    void forwardWebSocketFrame(const std::vector<char>& frameData, ssize_t frameSize) {
-        // Forward the WebSocket frame to other connected clients
-
-        // for (int clientSocket : connectedClients_) {
-        //     if (clientSocket != senderSocket) {
-        //         ssize_t bytesWritten = write(clientSocket, &frameData[0], frameSize);
-        //         if (bytesWritten < 0) {
-        //             std::cerr << "Error forwarding WebSocket frame to client" << std::endl;
-        //         }
-        //     }
-        // }
     }
     */
 };

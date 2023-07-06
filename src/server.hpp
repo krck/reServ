@@ -32,14 +32,14 @@ namespace reServ {
 class Server {
 public:
     Server(int port, int connectionBacklog = 10, int maxEpollEvents = 100)
-        : _port(port), _maxEpollEvents(maxEpollEvents), _connectionBacklog(connectionBacklog), _serverAddrListFull(nullptr),
-          _mainSocketfd(-1), _epollfd(-1), _clientConnections(), _requestQueue(), _threadPool(), _runBgTasks(true), _logger(Logger::instance()) {
+        : _port(port), _maxEpollEvents(maxEpollEvents), _connectionBacklog(connectionBacklog), _serverAddrListFull(nullptr), _maxBgThreadId(0),
+          _mainSocketfd(-1), _epollfd(-1), _clientConnections(), _requestQueue(), _threadPool(), _runBgThreads(true), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(1000);
         // Initialize the background-thread pool that will process the incoming requests (-1 for main thread)
-        const unsigned int numThreads = (std::thread::hardware_concurrency() - 1);
+        const unsigned int numThreads = _maxBgThreadId = (std::thread::hardware_concurrency() - 1);
         for(unsigned int i = 0; i < numThreads; i++) {
-            _threadPool.emplace_back([this]() { requestBackgroundTask(); });
+            _threadPool[i] = std::thread(&Server::requestBackgroundThread, this, i);
         }
     }
 
@@ -89,10 +89,10 @@ public:
 
     ~Server() {
         // Stop the worker threads and wait for them to finish
-        _runBgTasks = false;
+        _runBgThreads = false;
         _cv.notify_all();
         for(auto& thread : _threadPool) {
-            thread.join();
+            thread.second.join();
         }
 
         // Free the linked list of Server addrinfos
@@ -159,108 +159,140 @@ private:
     }
 
     bool handleNewConnection() {
+        int newClientSocketFd = -1;
         sockaddr_storage clientAddr{};
         socklen_t clientAddrSize = sizeof(clientAddr);
-        // Accept a new connection on the main/listening socket (creates a new client socket and establishes the connection)
-        int newClientSocketFd = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
-        const std::string clientAddrStr = extractIpAddrString(&clientAddr);
-        if(newClientSocketFd < 0)
-            return false;
+        try {
+            // Accept a new connection on the main/listening socket (creates a new client socket and establishes the connection)
+            newClientSocketFd = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
+            const std::string clientAddrStr = extractIpAddrString(&clientAddr);
+            if(newClientSocketFd < 0)
+                return false;
 
-        // Receive initial data from the client
-        char recvBuffer[RECV_BUFF_SIZE];
-        ssize_t bytesRead = recv(newClientSocketFd, recvBuffer, RECV_BUFF_SIZE, 0);
-        const std::string recvDataStr(recvBuffer, bytesRead);
-        if(bytesRead > 0) {
-            // 1. WEBSOCKET CONNECTION
-            //    Check if the initial data sent from the Client contains the "upgrade: websocket" header
-            if(isWebSocketUpgradeRequest(recvDataStr)) {
-                std::lock_guard<std::mutex> lock(_mutex);
-                std::unique_ptr<Connection> wsPtr(new WebSocketConnection(newClientSocketFd, clientAddr, clientAddrStr));
-                _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(wsPtr)));
+            // Receive initial data from the client
+            char recvBuffer[RECV_BUFF_SIZE];
+            ssize_t bytesRead = recv(newClientSocketFd, recvBuffer, RECV_BUFF_SIZE, 0);
+            const std::string recvDataStr(recvBuffer, bytesRead);
+            if(bytesRead > 0) {
+                // 1. WEBSOCKET CONNECTION
+                //    Check if the initial data sent from the Client contains the "upgrade: websocket" header
+                //    (this is a "quick scan", the actual request validation of the upgrade header will happen later)
+                if(isWebSocketUpgradeRequest(recvDataStr)) {
+                    std::lock_guard<std::mutex> lock(_mutex);
+                    std::unique_ptr<Connection> wsPtr(new WebSocketConnection(newClientSocketFd, clientAddr, clientAddrStr));
+                    _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(wsPtr)));
+                }
+                // 2. HTTP CONNECTION
+                //    Check if the initial data sent from the Client contains a known HTTP Method
+                else if(isHttpRequest(recvDataStr)) {
+                    std::lock_guard<std::mutex> lock(_mutex);
+                    std::unique_ptr<Connection> httpPtr(new HttpConnection(newClientSocketFd, clientAddr, clientAddrStr));
+                    _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(httpPtr)));
+                }
             }
-            // 2. HTTP CONNECTION
-            //    Check if the initial data sent from the Client contains a known HTTP Method
-            else if(isHttpRequest(recvDataStr)) {
+
+            // Check if a Connection (WebSocket or HTTP) was established and saved
+            if(_clientConnections.find(newClientSocketFd) != _clientConnections.end()) {
+                // Set the client socket to non-blocking mode and add it to the epoll instance
+                fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
+                epoll_event event;
+                event.data.fd = newClientSocketFd;
+                event.events = EPOLLIN | EPOLLET;  // read events in edge-triggered mode
+                epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event);
+
+                // Once the Client connection is established and the socket is configured:
+                // Handle the "initial" incoming message like any other message (background threads)
                 std::lock_guard<std::mutex> lock(_mutex);
-                std::unique_ptr<Connection> httpPtr(new HttpConnection(newClientSocketFd, clientAddr, clientAddrStr));
-                _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(httpPtr)));
+                _requestQueue.emplace(newClientSocketFd, recvDataStr);
+                _cv.notify_one();
+
+                _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
+                return true;
             }
-        }
-
-        // Check if a Connection (WebSocket or HTTP) was established and saved
-        if(_clientConnections.find(newClientSocketFd) != _clientConnections.end()) {
-            // Set the client socket to non-blocking mode and add it to the epoll instance
-            fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
-            epoll_event event;
-            event.data.fd = newClientSocketFd;
-            event.events = EPOLLIN | EPOLLET;  // read events in edge-triggered mode
-            epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event);
-
-            // Once the Client connection is established and the socket is configured:
-            // Handle the "initial" incoming message like any other message (background threads)
-            std::lock_guard<std::mutex> lock(_mutex);
-            _requestQueue.emplace(newClientSocketFd, recvDataStr);
-            _cv.notify_one();
-
-            _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
-            return true;
-        }
-        // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
-        else {
-            close(newClientSocketFd);
-            _logger.log(LogLevel::Info, "Client Connection closed (from remote): " + clientAddrStr);
+            // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
+            else {
+                close(newClientSocketFd);
+                _logger.log(LogLevel::Info, "Client Connection closed (from remote): " + clientAddrStr);
+                return false;
+            }
+        } catch(const std::exception& e) {
+            _logger.log(LogLevel::Error, "New connection: " + std::string(e.what()));
+            // Close the new Socket something went wrong
+            if(newClientSocketFd >= 0) {
+                close(newClientSocketFd);
+            }
+            // Cleanup all possible remains of the new Socket, depending on where it failed
+            if(_clientConnections.find(newClientSocketFd) != _clientConnections.end()) {
+                epoll_ctl(_epollfd, EPOLL_CTL_DEL, newClientSocketFd, nullptr);
+                std::lock_guard<std::mutex> lock(_mutex);
+                _clientConnections.erase(newClientSocketFd);
+            }
             return false;
         }
     }
 
     void handleIncomingData(const epoll_event& pollEvent) {
         const int clientSockfd = pollEvent.data.fd;
-
-        // Read data from the client socket
-        char recvBuffer[RECV_BUFF_SIZE];
-        ssize_t bytesRead = recv(clientSockfd, recvBuffer, RECV_BUFF_SIZE, 0);
-        if(bytesRead > 0) {
-            // Add the incoming data to the message queue
-            std::lock_guard<std::mutex> lock(_mutex);
-            _requestQueue.emplace(clientSockfd, std::string(recvBuffer, bytesRead));
-            _cv.notify_one();
-        } else {
-            // Close the connection in case recv returned 0
+        try {
+            // Read data from the client socket
+            char recvBuffer[RECV_BUFF_SIZE];
+            ssize_t bytesRead = recv(clientSockfd, recvBuffer, RECV_BUFF_SIZE, 0);
+            if(bytesRead > 0) {
+                // Add the incoming data to the message queue
+                std::lock_guard<std::mutex> lock(_mutex);
+                _requestQueue.emplace(clientSockfd, std::string(recvBuffer, bytesRead));
+                _cv.notify_one();
+            } else {
+                // In case recv returns 0, the connection should be closed (client has closed)
+                // In case recv return -1, there was an error and the connection should be closed
+                // (use exception as control-flow to trigger the cleanup)
+                const std::string clientAddrStr = _clientConnections[clientSockfd]->getAddress();
+                throw std::runtime_error("Client Connection closed: " + clientAddrStr);
+            }
+        } catch(const std::exception& e) {
+            // Close the connection in case recv returned 0 or a error was thrown
             // (Remove the client from the epoll instance, the clientConnections and close the socket)
             std::lock_guard<std::mutex> lock(_mutex);
-            const std::string clientAddrStr = _clientConnections[clientSockfd]->getAddress();
             epoll_ctl(_epollfd, EPOLL_CTL_DEL, clientSockfd, nullptr);
             _clientConnections.erase(clientSockfd);
             close(clientSockfd);
 
-            if(bytesRead == 0) {
-                // In case recv returns 0, the connection should be closed (client has closed)
-                _logger.log(LogLevel::Info, "Client Connection closed (from remote): " + clientAddrStr);
-            } else {
-                // In case recv return -1, there was an error and the connection should be closed
-                _logger.log(LogLevel::Warning, "Client Connection closed (error): " + clientAddrStr);
-            }
+            // Log Info (not Error) since its is a expectd result for a connection to be closed somehow
+            _logger.log(LogLevel::Info, "Handle data: " + std::string(e.what()));
         }
     }
 
-    void requestBackgroundTask() {
-        while(_runBgTasks) {
-            // Background threads are waiting until a "notify_one()" is triggered after a item was added
+    void requestBackgroundThread(const int backgroundThreadId) {
+        try {
+            while(_runBgThreads) {
+                // Background threads are waiting until a "notify_one()" is triggered after a item was added
+                std::unique_lock<std::mutex> lock(_mutex);
+                _cv.wait(lock, [this]() { return (!_requestQueue.empty() || !_runBgThreads); });
+                if(!_runBgThreads)
+                    break;
+
+                // Get the added item and unlock the queue again
+                auto request = _requestQueue.front();
+                _requestQueue.pop();
+                lock.unlock();
+
+                // Handle the HTTP or WebSocket client connection async in any of the background threads
+                int clientSockfd = request.first;
+                if(_clientConnections.find(clientSockfd) != _clientConnections.end())
+                    _clientConnections[clientSockfd]->handleRequest(request.second);
+            }
+        } catch(const std::exception& e) {
+            _logger.log(LogLevel::Error, "Request Thread: " + std::string(e.what()));
+
+            // Detach and remove this failed background thread
             std::unique_lock<std::mutex> lock(_mutex);
-            _cv.wait(lock, [this]() { return (!_requestQueue.empty() || !_runBgTasks); });
-            if(!_runBgTasks)
-                break;
-
-            // Get the added item and unlock the queue again
-            auto request = _requestQueue.front();
-            _requestQueue.pop();
-            lock.unlock();
-
-            // Handle the HTTP or WebSocket client connection async in any of the background threads
-            int clientSockfd = request.first;
-            if(_clientConnections.find(clientSockfd) != _clientConnections.end())
-                _clientConnections[clientSockfd]->handleRequest(request.second);
+            _threadPool[backgroundThreadId].detach();
+            _threadPool.erase(backgroundThreadId);
+            // Add a new background thread in its place
+            if(_runBgThreads) {
+                ++_maxBgThreadId;
+                _threadPool[_maxBgThreadId] = std::thread(&Server::requestBackgroundThread, this, _maxBgThreadId);
+            }
         }
     }
 
@@ -270,13 +302,14 @@ private:
     const int _maxEpollEvents;
     const int _connectionBacklog;
     addrinfo* _serverAddrListFull;
+    int _maxBgThreadId;
     int _mainSocketfd;
     int _epollfd;
     // Server Clients
     std::unordered_map<int, std::unique_ptr<Connection>> _clientConnections;
     std::queue<std::pair<int, std::string>> _requestQueue;
-    std::vector<std::thread> _threadPool;
-    std::atomic<bool> _runBgTasks;
+    std::unordered_map<int, std::thread> _threadPool;
+    std::atomic<bool> _runBgThreads;
     std::condition_variable _cv;
     std::mutex _mutex;
     // Server Utility
