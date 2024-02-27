@@ -13,8 +13,12 @@ cmake_minimum_required(VERSION 3.0)
 # Set language configuration, compiler and compiler flags
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED true)
-set(CMAKE_CXX_COMPILER "/usr/bin/clang++")
+set(CMAKE_CXX_COMPILER "/usr/bin/g++")
 add_compile_options("-Wall" "-Wpedantic" "-Wextra" "-fexceptions")
+
+# Explicitly set the "-g" debug flags for the different build types
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g")
+string(REPLACE "-g" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
 # Define Project name, version and the used language (will set the ${PROJECT_NAME} variable)
 project(reServ  VERSION 0.1 

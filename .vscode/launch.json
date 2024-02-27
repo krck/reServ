@@ -5,15 +5,14 @@
             "name": "DEBUG (gdb) Launch",
             "type": "cppdbg",
             "request": "launch",
-            "cwd": "${workspaceFolder}",
             "preLaunchTask": "BUILD DEBUG (CMake)",
             "program": "${workspaceFolder}/build/debug/x64/bin/reServ",
-            "miDebuggerPath": "/usr/bin/gdb",
-            "MIMode": "gdb",
-            "environment": [],
             "args": [],
             "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
             "externalConsole": false,
+            "MIMode": "gdb",
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",

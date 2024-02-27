@@ -5,21 +5,15 @@
             "type": "shell",
             "label": "BUILD DEBUG (CMake)",
             "detail": "Run CMake with DEBUG settings and create the new executable in the DEBUG folder",
-            "command": "cmake -DCMAKE_BUILD_TYPE=Debug -B build/debug && cmake --build build/debug",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
+            "command": "cmake -B build/debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build/debug",
+            "group": "build"
         },
         {
             "type": "shell",
             "label": "BUILD RELEASE (CMake)",
             "detail": "Run CMake with RELEASE settings and create the new executable in the RELEASE folder",
             "command": "cmake -DCMAKE_BUILD_TYPE=Release -B build/release && cmake --build build/release",
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            }
+            "group": "build"
         }
     ]
 }
