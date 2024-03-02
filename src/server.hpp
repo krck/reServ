@@ -1,6 +1,11 @@
 #ifndef RESERV_SERVER_H
 #define RESERV_SERVER_H
 
+#include "connection.hpp"
+#include "helper.hpp"
+#include "logger.hpp"
+#include "wsConfig.hpp"
+
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -27,13 +32,19 @@
 
 namespace reServ {
 
-#define RECV_BUFF_SIZE 1024
-
 class Server {
-public:
-    Server(int port, int connectionBacklog = 10, int maxEpollEvents = 100)
-        : _port(port), _maxEpollEvents(maxEpollEvents), _connectionBacklog(connectionBacklog), _serverAddrListFull(nullptr), _maxBgThreadId(0),
-          _mainSocketfd(-1), _epollfd(-1), _clientConnections(), _requestQueue(), _threadPool(), _runBgThreads(true), _logger(Logger::instance()) {
+  public:
+    Server(const WsConfig& config)
+        : _config(config)
+        , _serverAddrListFull(nullptr)
+        , _maxBgThreadId(0)
+        , _mainSocketfd(-1)
+        , _epollfd(-1)
+        , _clientConnections()
+        , _requestQueue()
+        , _threadPool()
+        , _runBgThreads(true)
+        , _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(1000);
         // Initialize the background-thread pool that will process the incoming requests (-1 for main thread)
@@ -52,7 +63,7 @@ public:
             // Put the Server socket in listening mode, waiting to accept new connections
             // Connection backlog: How many con. request will be queued before they get refused
             // (If a connection request arrives when the queue is full, they will get ECONNREFUSED)
-            if(listen(_mainSocketfd, _connectionBacklog) < 0)
+            if(listen(_mainSocketfd, _config.maxConnectionBacklog) < 0)
                 throw std::runtime_error("Failed to initialize listening");
 
             // Create the epoll instance
@@ -66,10 +77,10 @@ public:
             epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &event);
 
             // Start the MAIN EVENT LOOP (that currently can never finish, just crash via execption)
-            _logger.log(LogLevel::Info, "Server running. Main Socket listening on port " + std::to_string(_port) + "...");
+            _logger.log(LogLevel::Info, "Server running. Main Socket listening on port " + std::to_string(_config.port) + "...");
             while(true) {
-                std::vector<epoll_event> events(_maxEpollEvents);
-                int numEvents = epoll_wait(_epollfd, &events[0], _maxEpollEvents, -1);
+                std::vector<epoll_event> events(_config.maxEpollEvents);
+                int numEvents = epoll_wait(_epollfd, &events[0], _config.maxEpollEvents, -1);
                 for(int i = 0; i < numEvents; i++) {
                     if(events[i].data.fd == _mainSocketfd) {
                         // New client connection, if the "write" event is on the main listening socket
@@ -122,7 +133,7 @@ private:
 
         // Get the Servers IP address structures, based on the pre-configured "serverHints" (IPv4/IPv6, auto fill, TCP)
         // (All the Servers IP addresses that match the hint config will be stored in a linked-list struct "_serverAddrList")
-        if((addrStatus = getaddrinfo(nullptr, std::to_string(_port).c_str(), &serverHints, &_serverAddrListFull)) != 0)
+        if((addrStatus = getaddrinfo(nullptr, std::to_string(_config.port).c_str(), &serverHints, &_serverAddrListFull)) != 0)
             throw std::runtime_error("Failed to get address infos: " + std::string(gai_strerror(addrStatus)));
 
         // Loop through all the Server IP address results and bind a new socket to the first possible
@@ -170,8 +181,8 @@ private:
                 return false;
 
             // Receive initial data from the client
-            char recvBuffer[RECV_BUFF_SIZE];
-            ssize_t bytesRead = recv(newClientSocketFd, recvBuffer, RECV_BUFF_SIZE, 0);
+            char recvBuffer[_config.recvBufferSize];
+            ssize_t bytesRead = recv(newClientSocketFd, recvBuffer, _config.recvBufferSize, 0);
             const std::string recvDataStr(recvBuffer, bytesRead);
             if(bytesRead > 0) {
                 // 1. WEBSOCKET CONNECTION
@@ -235,8 +246,8 @@ private:
         const int clientSockfd = pollEvent.data.fd;
         try {
             // Read data from the client socket
-            char recvBuffer[RECV_BUFF_SIZE];
-            ssize_t bytesRead = recv(clientSockfd, recvBuffer, RECV_BUFF_SIZE, 0);
+            char recvBuffer[_config.recvBufferSize];
+            ssize_t bytesRead = recv(clientSockfd, recvBuffer, _config.recvBufferSize, 0);
             if(bytesRead > 0) {
                 // Add the incoming data to the message queue
                 std::lock_guard<std::mutex> lock(_mutex);
@@ -298,9 +309,7 @@ private:
 
 private:
     // Server Config
-    const int _port;
-    const int _maxEpollEvents;
-    const int _connectionBacklog;
+    const WsConfig& _config;
     addrinfo* _serverAddrListFull;
     int _maxBgThreadId;
     int _mainSocketfd;
