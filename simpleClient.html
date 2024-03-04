@@ -2,7 +2,6 @@
 <html>
 
 <head>
-  <title>Chat Client</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -10,10 +9,6 @@
     }
 
     h1 {
-      margin-bottom: 20px;
-    }
-
-    #messages {
       margin-bottom: 20px;
     }
 
@@ -25,7 +20,7 @@
       margin-bottom: 20px;
     }
 
-    #output {
+    #outputs {
       margin-bottom: 20px;
       color: red;
     }
@@ -42,83 +37,93 @@
     button:hover {
       background-color: #0056b3;
     }
+
+    p {
+      margin: 0;
+      font-size: small;
+    }
   </style>
 </head>
 
 <body>
-  <h1>Chat Client</h1>
-
-  <div id="messages"></div>
-
-  <form id="message-form">
-    <input type="text" id="message-input" placeholder="Type your message">
-    <button type="submit">Send</button>
-  </form>
-
-  <div id="buttons">
-    <button id="http-test-button">Test HTTP Connection</button>
+  <!-- HTML Content -->
+  <div>
+    <h1>WebSocket Test Client</h1>
     <button id="websocket-button">Connect to WebSocket</button>
+    <form id="message-form">
+      <input type="text" id="message-input" placeholder="Type your message">
+      <button type="submit">Send</button>
+    </form>
+    <div id="outputs"></div>
   </div>
 
-  <div id="output"></div>
-
+  <!-- JavaScript Code -->
   <script>
-    // Test HTTP Connection
-    document.getElementById('http-test-button').addEventListener('click', () => {
-      testHTTPConnection();
-    });
-
-    function testHTTPConnection() {
-      fetch('http://127.0.0.1:8080')
-        .then(response => response.text())
-        .then(data => {
-          console.log('HTTP Response:', data);
-          displayOutput('HTTP Response: ' + data);
-        })
-        .catch(error => {
-          console.error('Error:', error);
-          displayOutput('Error: ' + error);
-        });
-    }
-
-    // WebSocket Chat
     let socket;
     document.getElementById('websocket-button').addEventListener('click', () => {
-      establishWebSocketConnection();
-    });
+      try {
+        socket = new WebSocket('ws://127.0.0.1:8080');
+        displayOutput('WebSocket created', null, 'black');
+      } catch (error) {
+        displayOutput('WebSocket creation failed', error, 'red');
+        return;
+      }
 
-    function establishWebSocketConnection() {
-      socket = new WebSocket('ws://127.0.0.1:8080');
-
-      socket.addEventListener('open', (event) => {
-        console.log('WebSocket connection opened');
-        displayOutput('WebSocket connection opened');
+      socket.addEventListener('open', (event) => { displayOutput('WebSocket connection opened', event, 'black'); });
+      socket.addEventListener('message', (event) => { displayOutput('Recieved: ', event.data, 'green'); });
+      socket.addEventListener('error', (event) => {
+        if (socket.readyState !== WebSocket.OPEN) {
+          displayOutput('WebSocket is not open. Current state:', socket.readyState, 'red');
+        }
+        displayOutput('WebSocket error occurred', event, 'red');
       });
-
-      socket.addEventListener('message', (event) => {
-        const message = event.data;
-        console.log('Received message:', message);
-        displayMessage(message);
-      });
-
       socket.addEventListener('close', (event) => {
-        console.log('WebSocket connection closed');
-        displayOutput('WebSocket connection closed');
+        displayOutput('WebSocket connection closed', event, 'black');
+        document.getElementById('websocket-button').disabled = false;
       });
 
       document.getElementById('websocket-button').disabled = true;
-    }
+    });
 
-    function displayMessage(message) {
-      const messagesDiv = document.getElementById('messages');
-      const messageElement = document.createElement('p');
-      messageElement.textContent = message;
-      messagesDiv.appendChild(messageElement);
-    }
+    document.getElementById('message-form').addEventListener('submit', (event) => {
+      event.preventDefault(); // Prevent the form from submitting normally
+      const messageInput = document.getElementById('message-input');
+      const message = messageInput.value;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(message);
+        displayOutput('Sent: ', message, 'green');
+        messageInput.value = ''; // Clear the input field
+      } else {
+        displayOutput('Cannot send message, WebSocket is not open', null, 'red');
+      }
+    });
 
-    function displayOutput(output) {
-      const outputDiv = document.getElementById('output');
-      outputDiv.textContent = output;
+    function displayOutput(outputStr, outputObj, color) {
+      const outputsDiv = document.getElementById('outputs');
+      const outputElement = document.createElement('p');
+
+      let output = outputStr;
+      if (typeof outputObj === 'object' && outputObj !== null) {
+        output += (": " + JSON.stringify(outputObj));
+      } else if (outputObj !== undefined) {
+        output += (": " + outputObj);
+      }
+
+      // Format the timestamp. This will give a format like: [HH:MM:SS]
+      const timestamp = new Date();
+      const formattedTimestamp = '[' +
+        timestamp.getHours().toString().padStart(2, '0') + ':' +
+        timestamp.getMinutes().toString().padStart(2, '0') + ':' +
+        timestamp.getSeconds().toString().padStart(2, '0') +
+        ']: ';
+
+      // Add the timestamp to the output
+      output = formattedTimestamp + output;
+
+      outputElement.style.color = color;
+      outputElement.textContent = output;
+      outputsDiv.appendChild(outputElement);
+      console.log(outputStr, outputObj);
     }
   </script>
 </body>
