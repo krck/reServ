@@ -18,11 +18,12 @@ Here are the general steps to create a WebSocket-based chat application in C++:
         Send WebSocket frames to the client.
 
     Implement the chat functionality:
-        Maintain a list of connected clients.
-        Handle client connections and disconnections.
-        Broadcast received messages to all connected clients.
-        Handle any other desired chat features like private messaging or nicknames.
-
+    - Broadcast: Send a message received from a client to all connected clients.
+    - Unicast: Send a message from a client to a specific other client.
+    - Multicast: Send a message from a client to a specific group of other clients.
+    - Request-Response: Handle a message by performing some action and then sending a response back to the client that sent the message.
+    - Pub-Sub (Publish-Subscribe): Allow clients to subscribe to certain topics or channels and send messages to all clients that have subscribed to a channel when a message is published to it.
+    - Pings and Pongs: Use special types of control messages to check the connection status between the client and the server.
 
 
 1. TCP Connection

@@ -54,6 +54,15 @@
         "streambuf": "cpp",
         "thread": "cpp",
         "typeinfo": "cpp",
-        "future": "cpp"
+        "future": "cpp",
+        "map": "cpp",
+        "sstream": "cpp",
+        "list": "cpp",
+        "regex": "cpp",
+        "bitset": "cpp",
+        "complex": "cpp",
+        "iomanip": "cpp",
+        "cinttypes": "cpp",
+        "*.inc": "cpp"
     }
 }

@@ -1,31 +1,39 @@
 #ifndef RESERV_CONNECTION_H
 #define RESERV_CONNECTION_H
 
-#include <sys/socket.h>
-#include <sys/types.h>
+#include "logger.hpp"
 
+#include <algorithm>
 #include <cstring>
+#include <iomanip>
+#include <map>
+#include <openssl/bio.h>
+#include <openssl/buffer.h>
+#include <openssl/evp.h>
+#include <openssl/sha.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <vector>
-
-#include "logger.hpp"
 
 namespace reServ {
 
 class Connection {
-public:
+  public:
     Connection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
         : _clientSocketfd(clientSocketfd), _clientAddr(clientAddr), _clientAddrStr(clientAddrStr), _logger(Logger::instance()) {}
 
-public:
-    virtual bool handleRequest(const std::string& req) = 0;
+  public:
+    virtual bool handleHandshake(const std::string& req) = 0;
+    virtual bool handleRequest(const std::string& req)   = 0;
 
     inline std::string getAddress() const { return _clientAddrStr; }
 
     virtual ~Connection() = default;
 
-protected:
+  protected:
     const int _clientSocketfd;
     const sockaddr_storage _clientAddr;
     const std::string _clientAddrStr;
@@ -40,20 +48,13 @@ protected:
 //
 
 class HttpConnection : public Connection {
-public:
+  public:
     HttpConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
         : Connection(clientSocketfd, clientAddr, clientAddrStr) {}
 
-public:
-    bool handleRequest(const std::string& req) override {
+  public:
+    bool handleHandshake(const std::string&) override {
         try {
-            // -------------------------------------------------------
-            // Here could be any HTTP Server Logic:
-            // - Parse request Method (GET, POST, PUT, DELETE)
-            // - Parse request Content (text, json, html, file, ...)
-            // - Create a Server response, based on the Client request
-            // -------------------------------------------------------
-
             // In case the incoming data is not a HTTP "WebSocket upgrade request"
             // just send a minimal HTTP 1.1 response 501 and close the connection
             // (Version, Status, Content-Type, CORS* and some Content)
@@ -75,6 +76,18 @@ public:
             return false;
         }
     }
+
+    bool handleRequest(const std::string& req) override {
+        // -------------------------------------------------------
+        // Here could be any HTTP Server Logic:
+        // - Parse request Method (GET, POST, PUT, DELETE)
+        // - Parse request Content (text, json, html, file, ...)
+        // - Create a Server response, based on the Client request
+        // -------------------------------------------------------
+
+        // But since this is a WebSocket Server, this should have never gotten here
+        return handleHandshake(req);
+    }
 };
 
 //
@@ -84,46 +97,76 @@ public:
 //
 
 class WebSocketConnection : public Connection {
-public:
-    WebSocketConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
-        : Connection(clientSocketfd, clientAddr, clientAddrStr) {}
+  private:
+    // unique_ptr custom deleter for OpenSSL BIO
+    struct BIOFreeAll {
+        void operator()(BIO* p) { BIO_free_all(p); }
+    };
 
-public:
-    // bool handleHandshake(const std::string& req) override {
-    //     // Upgrade the connection to WebSocket and send the upgrade response to the client
-    //     std::string response = "HTTP/1.1 101 Switching Protocols\r\n";
-    //     response += "Upgrade: websocket\r\n";
-    //     response += "Connection: Upgrade\r\n";
-    //     response += "Sec-WebSocket-Accept: <websocket key>\r\n";
-    //     response += "\r\n";
+    // Simple validation codes for the WebSocket handshake
+    enum class ValidationCode {
+        OK                  = 0,
+        BadRequest          = 1,
+        Forbidden           = 2,
+        VersionNotSupported = 3,
+    };
 
-    //     ssize_t bytesWritten = send(_clientSocketfd, response.c_str(), response.length(), 0);
-    //     if(bytesWritten < 0)
-    //         return false;
+  public:
+    WebSocketConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr,
+                        const std::string& supportedWsVersion)
+        : Connection(clientSocketfd, clientAddr, clientAddrStr), _supportedWsVersion(supportedWsVersion) {}
 
-    //     return true;
-    // }
+  public:
+    bool handleHandshake(const std::string& req) override {
+        std::map<std::string, std::string> reqHeaders;
+        const ValidationCode validationCode = validateWebSocketUpgradeHeader(req, reqHeaders);
+
+        std::ostringstream httpResponseStream;
+        if(validationCode == ValidationCode::OK) {
+            // The "Sec-WebSocket-Accept" header must be created and added to the response
+            std::string acceptKey = createWebSocketAcceptKey(reqHeaders["sec-websocket-key"]);
+
+            // Send Handshake Response:
+            // - The "default" response is indicating a Upgrade from HTTP to WebSockets (101 Switching Protocols)
+            // - Each header line must end with "\r\n" and add an extra "\r\n" at the end to terminate the header
+            httpResponseStream << "HTTP/1.1 101 Switching Protocols\r\n"
+                               << "Upgrade: websocket\r\n"
+                               << "Connection: Upgrade\r\n"
+                               << "Sec-WebSocket-Accept: " << acceptKey << "\r\n"
+                               << "\r\n"
+                               << "";
+        } else if(validationCode == ValidationCode::BadRequest) {
+            // Send "400 Bad Request" if the header is not understood or has incorrect/missing values
+            httpResponseStream << "HTTP/1.1 400 Bad Request\r\n"
+                               << "Content-Type: text/plain\r\n"
+                               << "\r\n"
+                               << "Bad Request: The server could not understand the request due to invalid syntax or missing values.\r\n"
+                               << "";
+        } else if(validationCode == ValidationCode::Forbidden) {
+            // Send "403 Forbidden", in chase the "Origin" header was checked and deemed invalid
+            httpResponseStream << "HTTP/1.1 403 Forbidden\r\n"
+                               << "Content-Type: text/plain\r\n"
+                               << "\r\n"
+                               << "Forbidden: You don't have permission to access on this server.\r\n"
+                               << "";
+
+        } else if(validationCode == ValidationCode::VersionNotSupported) {
+            // Send a "Sec-WebSocket-Version" header back, if the requested version was not supported (with a list of supported versions)
+            httpResponseStream << "HTTP/1.1 426 Upgrade Required\r\n"
+                               << "Sec-WebSocket-Version: " << _supportedWsVersion << "\r\n"
+                               << "Content-Type: text/plain\r\n"
+                               << "\r\n"
+                               << "Upgrade Required: The server cannot establish a WebSocket connection using the version specified.\r\n"
+                               << "";
+        }
+
+        const std::string response = httpResponseStream.str();
+        ssize_t bytesWritten       = send(_clientSocketfd, response.c_str(), response.length(), 0);
+        return (bytesWritten < 0);
+    }
 
     bool handleRequest(const std::string& req) override {
         try {
-            // Perform WebSocket handshake
-            // if(performWebSocketHandshake(req)) {
-            //     std::vector<char> buffer(1024);
-
-            //     while(true) {
-            //         // Read WebSocket frame header
-            //         ssize_t bytesRead = read(_clientSocketfd, buffer.data(), 2);
-            //         if(bytesRead < 0) {
-            //             std::cerr << "Error reading WebSocket frame header" << std::endl;
-            //             return;
-            //         }
-
-            //         if(bytesRead == 0) {
-            //             // WebSocket connection closed
-            //             std::cout << "WebSocket connection closed" << std::endl;
-            //             return;
-            //         }
-
             //         unsigned char opcode = buffer[0] & 0x0F;
             //         bool isMasked = buffer[1] & 0x80;
             //         uint64_t payloadLength = buffer[1] & 0x7F;
@@ -213,72 +256,102 @@ public:
 
             //         // Forward WebSocket frame to other connected clients
             //         forwardWebSocketFrame(buffer, bytesRead);
-            //     }
-            // }
-            return true;
+
+            // return true;
+
+            return (req.length() > 0);
         } catch(const std::exception& e) {
             _logger.log(LogLevel::Error, "WebSocket Connection: " + std::string(e.what()));
             return false;
         }
     }
 
-private:
-    /*
-    bool performWebSocketHandshake(const std::string& request) {
-        // // Extract the WebSocket key from the request
-        // std::string key;
-        // size_t keyPos = request.find("Sec-WebSocket-Key: ");
-        // if(keyPos != std::string::npos) {
-        //     keyPos += 19;  // Length of "Sec-WebSocket-Key: "
-        //     size_t keyEndPos = request.find("\r\n", keyPos);
-        //     if(keyEndPos != std::string::npos) {
-        //         key = request.substr(keyPos, keyEndPos - keyPos);
-        //     }
+  private:
+    ValidationCode validateWebSocketUpgradeHeader(std::string req, std::map<std::string, std::string>& headers) {
+        // Remove all whitespace, except line breaks from the request
+        req.erase(std::remove_if(req.begin(), req.end(), [](unsigned char x) { return x == '\r' || x == '\t' || x == ' '; }), req.end());
+
+        std::string line, key;
+        std::istringstream requestStream(req);
+        // Parse the request into a map of headers
+        while(std::getline(requestStream, line)) {
+            auto separator = line.find(':');
+            if(separator != std::string::npos) {
+                // Transform req header key to lowercase (... for easy comparisons and easy hardcoding :P)
+                key = line.substr(0, separator);
+                std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return std::tolower(c); });
+                headers[key] = line.substr(separator + 1);
+            }
+        }
+
+        // Validate the HTTP Request (split at the first linebreak)
+        const std::string httpInfo = req.substr(0, req.find("\n"));
+        // TODO
+        // ...
+        // HTTP version must be 1.1 or higher
+        // if(headers["http-version"] != "1.1" && headers["http-version"] != "2.0" && headers["http-version"] != "3.0") {
+        //     return ValidationCode::VersionNotSupported;
         // }
 
-        // if(key.empty()) {
-        //     std::cerr << "Invalid WebSocket upgrade request" << std::endl;
-        //     return false;
-        // }
+        if(
+            // Must include "Upgrade: websocket"
+            (headers["upgrade"] != "websocket")
+            // Must include "Connection: Upgrade"
+            || (headers["connection"].find("Upgrade") == std::string::npos)
+            // Must include "Sec-WebSocket-Key" with a value
+            || (headers.find("sec-websocket-key") == headers.end() || headers["sec-websocket-key"].empty())
+            // Bad Request
+        ) {
+            return ValidationCode::BadRequest;
+        }
 
-        // // Generate the WebSocket accept key
-        // std::string acceptKey = generateWebSocketAcceptKey(key);
+        if(
+            // Must include "Sec-WebSocket-Version" with a value
+            headers.find("sec-websocket-version") == headers.end() || headers["sec-websocket-version"] != _supportedWsVersion
+            // Version Not Supported
+        ) {
+            return ValidationCode::VersionNotSupported;
+        }
 
-        // // Construct the WebSocket upgrade response
-        // std::string response = "HTTP/1.1 101 Switching Protocols\r\n"
-        //                        "Upgrade: websocket\r\n"
-        //                        "Connection: Upgrade\r\n"
-        //                        "Sec-WebSocket-Accept: "
-        //                        + acceptKey + "\r\n"
-        //                                      "\r\n";
+        if(
+            // All browsers send a "Origin" header. This can be validated as well
+            // (but this value can also be NULL, so it's not always reliable)
+            headers.find("origin") == headers.end()
+            // Forbidden
+        ) {
+            return ValidationCode::Forbidden;
+        }
 
-        // // Send the WebSocket upgrade response
-        // ssize_t bytesWritten = write(_clientSocketfd, response.c_str(), response.size());
-        // if(bytesWritten < 0) {
-        //     std::cerr << "Error writing WebSocket upgrade response" << std::endl;
-        //     return false;
-        // }
-
-        // std::cout << "WebSocket upgrade response sent" << std::endl;
-
-        return true;
+        return ValidationCode::OK;
     }
 
-    std::string generateWebSocketAcceptKey(const std::string& key) {
-        // Concatenate the WebSocket key with the WebSocket GUID and calculate the SHA-1 hash
-        std::string concatenatedKey = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-        std::vector<unsigned char> sha1Hash(20);
-        // Calculate SHA-1 hash of the concatenated key here (not shown)
+    std::string createWebSocketAcceptKey(const std::string& webSocketKey) {
+        // 1. Concatenate the request "Sec-WebSocket-Key" with the magic uuid
+        const std::string concatenatedKey = webSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-        // Base64-encode the SHA-1 hash to generate the accept key
-        std::string acceptKey;
-        // Base64-encode the SHA-1 hash to acceptKey here (not shown)
+        // 2. Calculate the SHA-1 hash of the combination of those strings
+        char hex[3];
+        std::stringstream ss;
+        unsigned char hash[SHA_DIGEST_LENGTH];
+        SHA1((unsigned char*)concatenatedKey.c_str(), concatenatedKey.length(), hash);
 
-        return acceptKey;
+        // 3. Base-64 encode the calculated hash and add the result as the "Sec-WebSocket-Accept" key
+        std::unique_ptr<BIO, BIOFreeAll> b64(BIO_new(BIO_f_base64()));
+        BIO_set_flags(b64.get(), BIO_FLAGS_BASE64_NO_NL);
+        BIO* sink = BIO_new(BIO_s_mem());
+        BIO_push(b64.get(), sink);
+        BIO_write(b64.get(), hash, SHA_DIGEST_LENGTH);
+        BIO_flush(b64.get());
+        const char* encoded;
+        const long len = BIO_get_mem_data(sink, &encoded);
+
+        return std::string(encoded, len);
     }
-    */
+
+  private:
+    const std::string& _supportedWsVersion;
 };
 
-}  // namespace reServ
+} // namespace reServ
 
 #endif

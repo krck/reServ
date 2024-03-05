@@ -7,28 +7,23 @@
 #include "wsConfig.hpp"
 
 #include <arpa/inet.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/epoll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-
 #include <atomic>
 #include <condition_variable>
 #include <cstring>
+#include <fcntl.h>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <stdexcept>
 #include <string>
+#include <sys/epoll.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <thread>
+#include <unistd.h>
 #include <unordered_map>
-
-#include "connection.hpp"
-#include "helper.hpp"
-#include "logger.hpp"
 
 namespace reServ {
 
@@ -50,7 +45,7 @@ class Server {
         // Initialize the background-thread pool that will process the incoming requests (-1 for main thread)
         const unsigned int numThreads = _maxBgThreadId = (std::thread::hardware_concurrency() - 1);
         for(unsigned int i = 0; i < numThreads; i++) {
-            _threadPool[i] = std::thread(&Server::requestBackgroundThread, this, i);
+            _threadPool[i] = std::thread(&Server::serverBackgroundThread, this, i);
         }
     }
 
@@ -72,7 +67,7 @@ class Server {
 
             // Add the server socket to the epoll instance
             epoll_event event;
-            event.events = EPOLLIN | EPOLLET;  // Read events with edge-triggered mode
+            event.events  = EPOLLIN | EPOLLET; // Read events with edge-triggered mode
             event.data.fd = _mainSocketfd;
             epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &event);
 
@@ -102,7 +97,7 @@ class Server {
         // Stop the worker threads and wait for them to finish
         _runBgThreads = false;
         _cv.notify_all();
-        for(auto& thread : _threadPool) {
+        for(auto& thread: _threadPool) {
             thread.second.join();
         }
 
@@ -117,19 +112,19 @@ class Server {
         _logger.log(LogLevel::Info, "Server stopped. Main Socket closed.");
     }
 
-private:
+  private:
     int createAndBindMainServerSocket() {
         addrinfo* serverAddr;
         addrinfo serverHints;
         int socketOptions = 0;
-        int serverSocket = 0;
-        int addrStatus = 0;
+        int serverSocket  = 0;
+        int addrStatus    = 0;
 
         // Helper struct for getaddrinfo() which will create the servers address configuration
         std::memset(&serverHints, 0, sizeof(serverHints));
-        serverHints.ai_flags = AI_PASSIVE;      // AI_PASSIVE to automatically fill in the server IP
-        serverHints.ai_family = AF_UNSPEC;      // AF_UNSPEC to enable IPv4/IPv6
-        serverHints.ai_socktype = SOCK_STREAM;  // TCP
+        serverHints.ai_flags    = AI_PASSIVE;  // AI_PASSIVE to automatically fill in the server IP
+        serverHints.ai_family   = AF_UNSPEC;   // AF_UNSPEC to enable IPv4/IPv6
+        serverHints.ai_socktype = SOCK_STREAM; // TCP
 
         // Get the Servers IP address structures, based on the pre-configured "serverHints" (IPv4/IPv6, auto fill, TCP)
         // (All the Servers IP addresses that match the hint config will be stored in a linked-list struct "_serverAddrList")
@@ -171,11 +166,11 @@ private:
 
     bool handleNewConnection() {
         int newClientSocketFd = -1;
-        sockaddr_storage clientAddr{};
+        sockaddr_storage clientAddr {};
         socklen_t clientAddrSize = sizeof(clientAddr);
         try {
             // Accept a new connection on the main/listening socket (creates a new client socket and establishes the connection)
-            newClientSocketFd = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
+            newClientSocketFd               = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
             const std::string clientAddrStr = extractIpAddrString(&clientAddr);
             if(newClientSocketFd < 0)
                 return false;
@@ -190,7 +185,7 @@ private:
                 //    (this is a "quick scan", the actual request validation of the upgrade header will happen later)
                 if(isWebSocketUpgradeRequest(recvDataStr)) {
                     std::lock_guard<std::mutex> lock(_mutex);
-                    std::unique_ptr<Connection> wsPtr(new WebSocketConnection(newClientSocketFd, clientAddr, clientAddrStr));
+                    std::unique_ptr<Connection> wsPtr(new WebSocketConnection(newClientSocketFd, clientAddr, clientAddrStr, _config.wsVersion));
                     _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(wsPtr)));
                 }
                 // 2. HTTP CONNECTION
@@ -208,14 +203,16 @@ private:
                 fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
                 epoll_event event;
                 event.data.fd = newClientSocketFd;
-                event.events = EPOLLIN | EPOLLET;  // read events in edge-triggered mode
+                event.events  = EPOLLIN | EPOLLET; // read events in edge-triggered mode
                 epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event);
 
                 // Once the Client connection is established and the socket is configured:
-                // Handle the "initial" incoming message like any other message (background threads)
-                std::lock_guard<std::mutex> lock(_mutex);
-                _requestQueue.emplace(newClientSocketFd, recvDataStr);
-                _cv.notify_one();
+                // Handle the "initial" incoming message directly to remove specific handling (no if/else handshake)
+                // (for WebSockets, a hash has to be calculated on handshake ... is to slow here, move to background task)
+                _clientConnections[newClientSocketFd]->handleHandshake(recvDataStr);
+                // std::lock_guard<std::mutex> lock(_mutex);
+                // _requestQueue.emplace(newClientSocketFd, recvDataStr);
+                // _cv.notify_one();
 
                 _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
                 return true;
@@ -273,7 +270,7 @@ private:
         }
     }
 
-    void requestBackgroundThread(const int backgroundThreadId) {
+    void serverBackgroundThread(const int backgroundThreadId) {
         try {
             while(_runBgThreads) {
                 // Background threads are waiting until a "notify_one()" is triggered after a item was added
@@ -302,12 +299,12 @@ private:
             // Add a new background thread in its place
             if(_runBgThreads) {
                 ++_maxBgThreadId;
-                _threadPool[_maxBgThreadId] = std::thread(&Server::requestBackgroundThread, this, _maxBgThreadId);
+                _threadPool[_maxBgThreadId] = std::thread(&Server::serverBackgroundThread, this, _maxBgThreadId);
             }
         }
     }
 
-private:
+  private:
     // Server Config
     const WsConfig& _config;
     addrinfo* _serverAddrListFull;
@@ -325,6 +322,6 @@ private:
     Logger& _logger;
 };
 
-}  // namespace reServ
+} // namespace reServ
 
 #endif

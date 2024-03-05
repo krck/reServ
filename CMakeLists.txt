@@ -24,12 +24,18 @@ string(REPLACE "-g" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 project(reServ  VERSION 0.1 
                 DESCRIPTION "WebSocket Relay Server"
                 LANGUAGES CXX)
- 
+
 # Set the compiled output paths for executables and libraries
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/x64/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/x64/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/x64/bin)
 
+include_directories(${CMAKE_SOURCE_DIR}/lib/openssl/include)
+link_directories(${CMAKE_SOURCE_DIR}/lib/openssl)
+
 # Add the executable files (all .cpp files that need to be compiled and linked)
 file(GLOB_RECURSE SOURCES src/*.cpp)
 add_executable(${PROJECT_NAME} ${SOURCES})
+
+# Now that the target is defined, link the libraries to it
+target_link_libraries(${PROJECT_NAME} ssl crypto)

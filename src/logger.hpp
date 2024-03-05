@@ -11,9 +11,11 @@
 namespace reServ {
 
 // Enum - Log levels
-enum class LogLevel { Info,
-                      Warning,
-                      Error };
+enum class LogLevel {
+    Info,
+    Warning,
+    Error
+};
 
 // Struct to hold log information
 struct LogEntry {
@@ -26,7 +28,7 @@ struct LogEntry {
 // (for now simply logging to the standard-output but "printLogEntry" could be virtual)
 //
 class Logger {
-public:
+  public:
     static Logger& instance() {
         // Instantiated on first use - Guaranteed to be destroyed
         static Logger instance;
@@ -35,7 +37,7 @@ public:
 
     void log(LogLevel level, const std::string& message) {
         std::lock_guard<std::mutex> lock(queueMutex);
-        logQueue.push({level, message});
+        logQueue.push({ level, message });
     }
 
     ~Logger() {
@@ -44,7 +46,7 @@ public:
         logThread.join();
     }
 
-private:
+  private:
     // Private ctor so no other object can be created
     Logger() : stopLogging(false) {
         // Start the logging thread
@@ -52,10 +54,10 @@ private:
     }
 
     // Delete copy-construcor and copy-assignment operator
-    Logger(Logger const&) = delete;
+    Logger(Logger const&)         = delete;
     void operator=(Logger const&) = delete;
 
-private:
+  private:
     void processLogs() {
         while(!stopLogging) {
             try {
@@ -77,12 +79,12 @@ private:
 
     void printLogEntry(const LogEntry& entry) {
         // Get current time
-        auto currentTime = std::chrono::system_clock::now();
+        auto currentTime      = std::chrono::system_clock::now();
         std::time_t timestamp = std::chrono::system_clock::to_time_t(currentTime);
 
         // Convert timestamp to string (Remove newline character from the end of the string)
         std::string timeString = std::ctime(&timestamp);
-        timeString = timeString.substr(0, timeString.size() - 1);
+        timeString             = timeString.substr(0, timeString.size() - 1);
 
         // Print log entry to console
         std::string levelString;
@@ -96,7 +98,7 @@ private:
         std::cout << "[" << timeString << "][" << levelString << "]: " << entry.message << std::endl;
     }
 
-private:
+  private:
     std::queue<LogEntry> logQueue;
     std::atomic<bool> stopLogging;
     std::thread logThread;
@@ -104,6 +106,6 @@ private:
     std::mutex queueMutex;
 };
 
-}  // namespace reServ
+} // namespace reServ
 
 #endif

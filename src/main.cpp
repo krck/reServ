@@ -15,6 +15,8 @@ int main(int argc, char* argv[]) {
 
             if(argKey == "--port") {
                 config.port = std::stoi(argVal);
+            } else if(argKey == "--wsVersion") {
+                config.wsVersion = argVal;
             } else if(argKey == "--maxConnectionBacklog") {
                 config.maxConnectionBacklog = std::stoi(argVal);
             } else if(argKey == "--maxEpollEvents") {

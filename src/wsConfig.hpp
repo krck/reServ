@@ -1,11 +1,14 @@
 #ifndef RESERV_WSCONFIG_H
 #define RESERV_WSCONFIG_H
 
+#include <string>
+
 namespace reServ {
 
 struct WsConfig {
     // Dynamic/Args configuration
     int port                      = 8080;
+    std::string wsVersion         = "13";
     int maxConnectionBacklog      = 16;
     int maxEpollEvents            = 128;
     int maxPayloadLength          = 16 * 1024 * 1024;
