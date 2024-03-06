@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>Chat Client</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+    }
+
+    #messages {
+      margin-bottom: 20px;
+    }
+
+    #message-input {
+      margin-right: 10px;
+    }
+
+    #buttons {
+      margin-bottom: 20px;
+    }
+
+    #output {
+      margin-bottom: 20px;
+      color: red;
+    }
+
+    button {
+      padding: 5px 5px;
+      margin: 5px;
+      background-color: #007bff;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>Chat Client</h1>
+
+  <div id="messages"></div>
+
+  <form id="message-form">
+    <input type="text" id="message-input" placeholder="Type your message">
+    <button type="submit">Send</button>
+  </form>
+
+  <div id="buttons">
+    <button id="http-test-button">Test HTTP Connection</button>
+    <button id="websocket-button">Connect to WebSocket</button>
+  </div>
+
+  <div id="output"></div>
+
+  <script>
+    // Test HTTP Connection
+    document.getElementById('http-test-button').addEventListener('click', () => {
+      testHTTPConnection();
+    });
+
+    function testHTTPConnection() {
+      fetch('http://127.0.0.1:8080')
+        .then(response => response.text())
+        .then(data => {
+          console.log('HTTP Response:', data);
+          displayOutput('HTTP Response: ' + data);
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          displayOutput('Error: ' + error);
+        });
+    }
+
+    // WebSocket Chat
+    let socket;
+    document.getElementById('websocket-button').addEventListener('click', () => {
+      establishWebSocketConnection();
+    });
+
+    function establishWebSocketConnection() {
+      socket = new WebSocket('ws://127.0.0.1:8080');
+
+      socket.addEventListener('open', (event) => {
+        console.log('WebSocket connection opened');
+        displayOutput('WebSocket connection opened');
+      });
+
+      socket.addEventListener('message', (event) => {
+        const message = event.data;
+        console.log('Received message:', message);
+        displayMessage(message);
+      });
+
+      socket.addEventListener('close', (event) => {
+        console.log('WebSocket connection closed');
+        displayOutput('WebSocket connection closed');
+      });
+
+      document.getElementById('websocket-button').disabled = true;
+    }
+
+    function displayMessage(message) {
+      const messagesDiv = document.getElementById('messages');
+      const messageElement = document.createElement('p');
+      messageElement.textContent = message;
+      messagesDiv.appendChild(messageElement);
+    }
+
+    function displayOutput(output) {
+      const outputDiv = document.getElementById('output');
+      outputDiv.textContent = output;
+    }
+  </script>
+</body>
+
+</html>
