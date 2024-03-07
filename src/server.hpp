@@ -1,9 +1,10 @@
 #ifndef RESERV_SERVER_H
 #define RESERV_SERVER_H
 
-#include "connection.hpp"
+#include "enums.hpp"
 #include "helper.hpp"
 #include "logger.hpp"
+#include "responseMessages.hpp"
 #include "wsConfig.hpp"
 
 #include <arpa/inet.h>
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <netdb.h>
@@ -28,6 +30,24 @@
 namespace reServ {
 
 class Server {
+  private:
+    struct Connection {
+      public:
+        const int clientSocketfd;
+        const sockaddr_storage clientAddr;
+        const std::string clientAddrStr;
+
+      public:
+        Connection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
+            : clientSocketfd(clientSocketfd), clientAddr(clientAddr), clientAddrStr(clientAddrStr) {}
+
+        // Delete the copy constructor and copy assignment operator
+        Connection(const Connection&)            = delete;
+        Connection& operator=(const Connection&) = delete;
+
+        virtual ~Connection() = default;
+    };
+
   public:
     Server(const WsConfig& config)
         : _config(config)
@@ -178,60 +198,63 @@ class Server {
             // Receive initial data from the client
             char recvBuffer[_config.recvBufferSize];
             ssize_t bytesRead = recv(newClientSocketFd, recvBuffer, _config.recvBufferSize, 0);
-            const std::string recvDataStr(recvBuffer, bytesRead);
+            const std::string request(recvBuffer, bytesRead);
             if(bytesRead > 0) {
-                // 1. WEBSOCKET CONNECTION
-                //    Check if the initial data sent from the Client contains the "upgrade: websocket" header
-                //    (this is a "quick scan", the actual request validation of the upgrade header will happen later)
-                if(isWebSocketUpgradeRequest(recvDataStr)) {
-                    std::lock_guard<std::mutex> lock(_mutex);
-                    std::unique_ptr<Connection> wsPtr(new WebSocketConnection(newClientSocketFd, clientAddr, clientAddrStr, _config.wsVersion));
-                    _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(wsPtr)));
-                }
-                // 2. HTTP CONNECTION
-                //    Check if the initial data sent from the Client contains a known HTTP Method
-                else if(isHttpRequest(recvDataStr)) {
-                    std::lock_guard<std::mutex> lock(_mutex);
-                    std::unique_ptr<Connection> httpPtr(new HttpConnection(newClientSocketFd, clientAddr, clientAddrStr));
-                    _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(httpPtr)));
-                }
-            }
+                std::string response;
+                if(isWebSocketUpgradeRequest(request)) {
+                    // NEW WEBSOCKET CONNECTION (upgrade-request)
+                    std::map<std::string, std::string> reqHeaders;
+                    const HandshakeValidationCode validationCode = validateWebSocketUpgradeHeader(request, _config.wsVersion, reqHeaders);
 
-            // Check if a Connection (WebSocket or HTTP) was established and saved
-            if(_clientConnections.find(newClientSocketFd) != _clientConnections.end()) {
-                // Set the client socket to non-blocking mode and add it to the epoll instance
+                    if(validationCode == HandshakeValidationCode::OK) {
+                        // The "Sec-WebSocket-Accept" header must be created and added to the response
+                        std::string acceptKey = createWebSocketAcceptKey(reqHeaders["sec-websocket-key"]);
+                        response              = getResponse_Handshake_SwitchingProtocols(acceptKey);
+                    } else if(validationCode == HandshakeValidationCode::BadRequest) {
+                        response = getResponse_Handshake_BadRequest();
+                    } else if(validationCode == HandshakeValidationCode::Forbidden) {
+                        response = getResponse_Handshake_Forbidden();
+                    } else if(validationCode == HandshakeValidationCode::VersionNotSupported) {
+                        response = getResponse_UpgradeRequired(_config.wsVersion);
+                    }
+                } else if(isHttpRequest(request)) {
+                    // NEW HTTP CONNECTION (not implemented)
+                    std::string res = getResponse_Handshake_NotImplemented();
+                }
+
+                // TODO:
+                // Check if it makes sense, so setup a "Connection" in case of any other HTTP request
+                // (if this Connection is closed immediateley this might not be needed - or is it helpfull for future use-cases?)
+
+                std::lock_guard<std::mutex> lock(_mutex);
+                std::unique_ptr<Connection> wsPtr(new Connection(newClientSocketFd, clientAddr, clientAddrStr));
+                _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(wsPtr)));
+
+                // If all is fine so far (response generated + client connection saved):
+                // then set the client socket to non-blocking mode and add it to the epoll instance
                 fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
                 epoll_event event;
                 event.data.fd = newClientSocketFd;
                 event.events  = EPOLLIN | EPOLLET; // read events in edge-triggered mode
                 epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event);
 
-                // Once the Client connection is established and the socket is configured:
-                // Handle the "initial" incoming message directly to remove specific handling (no if/else handshake)
-                // (for WebSockets, a hash has to be calculated on handshake ... is to slow here, move to background task)
-                _clientConnections[newClientSocketFd]->handleHandshake(recvDataStr);
-                // std::lock_guard<std::mutex> lock(_mutex);
-                // _requestQueue.emplace(newClientSocketFd, recvDataStr);
-                // _cv.notify_one();
-
+                ssize_t bytesWritten = send(newClientSocketFd, response.c_str(), response.length(), 0);
                 _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
-                return true;
-            }
-            // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
-            else {
-                close(newClientSocketFd);
-                _logger.log(LogLevel::Info, "Client Connection closed (from remote): " + clientAddrStr);
-                return false;
+                return (bytesWritten < 0);
+            } else {
+                // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
+                // (control flow via exception since all the cleanup logic is in the catch already)
+                throw std::runtime_error("Client Connection closed from remote: " + clientAddrStr);
             }
         } catch(const std::exception& e) {
             _logger.log(LogLevel::Error, "New connection: " + std::string(e.what()));
             // Close the new Socket something went wrong
             if(newClientSocketFd >= 0) {
                 close(newClientSocketFd);
+                epoll_ctl(_epollfd, EPOLL_CTL_DEL, newClientSocketFd, nullptr);
             }
             // Cleanup all possible remains of the new Socket, depending on where it failed
             if(_clientConnections.find(newClientSocketFd) != _clientConnections.end()) {
-                epoll_ctl(_epollfd, EPOLL_CTL_DEL, newClientSocketFd, nullptr);
                 std::lock_guard<std::mutex> lock(_mutex);
                 _clientConnections.erase(newClientSocketFd);
             }
@@ -243,19 +266,18 @@ class Server {
         const int clientSockfd = pollEvent.data.fd;
         try {
             // Read data from the client socket
-            char recvBuffer[_config.recvBufferSize];
-            ssize_t bytesRead = recv(clientSockfd, recvBuffer, _config.recvBufferSize, 0);
+            std::vector<uint8_t> recvBuffer(_config.recvBufferSize);
+            ssize_t bytesRead = recv(clientSockfd, &recvBuffer[0], _config.recvBufferSize, 0);
             if(bytesRead > 0) {
                 // Add the incoming data to the message queue
                 std::lock_guard<std::mutex> lock(_mutex);
-                _requestQueue.emplace(clientSockfd, std::string(recvBuffer, bytesRead));
+                _requestQueue.emplace(clientSockfd, std::move(recvBuffer));
                 _cv.notify_one();
             } else {
                 // In case recv returns 0, the connection should be closed (client has closed)
                 // In case recv return -1, there was an error and the connection should be closed
-                // (use exception as control-flow to trigger the cleanup)
-                const std::string clientAddrStr = _clientConnections[clientSockfd]->getAddress();
-                throw std::runtime_error("Client Connection closed: " + clientAddrStr);
+                // (control flow via exception since all the cleanup logic is in the catch already)
+                throw std::runtime_error("Client Connection closed: " + _clientConnections[clientSockfd]->clientAddrStr);
             }
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
@@ -285,9 +307,49 @@ class Server {
                 lock.unlock();
 
                 // Handle the HTTP or WebSocket client connection async in any of the background threads
-                int clientSockfd = request.first;
-                if(_clientConnections.find(clientSockfd) != _clientConnections.end())
-                    _clientConnections[clientSockfd]->handleRequest(request.second);
+                if(_clientConnections.find(request.first) != _clientConnections.end()) {
+                    // Handle the request
+                    // ... parse incoming data
+                    // ... create response
+                    // ....
+
+                    size_t index                        = 0;
+                    const std::vector<uint8_t>& message = request.second;
+
+                    uint8_t finNopcode  = message[index++];
+                    uint8_t maskNlength = message[index++];
+
+                    uint64_t payloadLength = maskNlength & 0x7F;
+                    if(payloadLength == 126) {
+                        payloadLength = (message[index++] << 8) | message[index++];
+                    } else if(payloadLength == 127) {
+                        payloadLength = 0;
+                        for(int i = 0; i < 8; i++) {
+                            payloadLength = (payloadLength << 8) | message[index++];
+                        }
+                    }
+
+                    std::vector<uint8_t> maskingKey;
+                    if(maskNlength & 0x80) {
+                        for(int i = 0; i < 4; i++) {
+                            maskingKey.push_back(message[index++]);
+                        }
+                    }
+
+                    std::vector<uint8_t> payloadData(payloadLength);
+                    for(uint64_t i = 0; i < payloadLength; i++) {
+                        payloadData[i] = message[index++];
+                        if(!maskingKey.empty()) {
+                            payloadData[i] ^= maskingKey[i % 4];
+                        }
+                    }
+
+                    const std::string payloadStr(payloadData.begin(), payloadData.end());
+                    std::cout << payloadStr << std::endl;
+                    // return payloadData;
+
+                    // ...
+                }
             }
         } catch(const std::exception& e) {
             _logger.log(LogLevel::Error, "Request Thread: " + std::string(e.what()));
@@ -306,14 +368,14 @@ class Server {
 
   private:
     // Server Config
+    int _epollfd;
+    int _mainSocketfd;
+    int _maxBgThreadId;
     const WsConfig& _config;
     addrinfo* _serverAddrListFull;
-    int _maxBgThreadId;
-    int _mainSocketfd;
-    int _epollfd;
     // Server Clients
     std::unordered_map<int, std::unique_ptr<Connection>> _clientConnections;
-    std::queue<std::pair<int, std::string>> _requestQueue;
+    std::queue<std::pair<int, std::vector<uint8_t>>> _requestQueue;
     std::unordered_map<int, std::thread> _threadPool;
     std::atomic<bool> _runBgThreads;
     std::condition_variable _cv;
