@@ -20,6 +20,26 @@
                     "ignoreFailures": true
                 }
             ]
+        },
+        {
+            "name": "DEBUG (Catch2) Tests",
+            "type": "cppdbg",
+            "request": "launch",
+            "preLaunchTask": "BUILD TESTS (CMake)",
+            "program": "${workspaceFolder}/build/debug/x64/bin/tests",
+            "args": [], // Add any arguments your tests need here
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
         }
     ]
 }

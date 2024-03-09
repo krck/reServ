@@ -1,4 +1,4 @@
-#include "server.hpp"
+#include "serverCore.hpp"
 #include "wsConfig.hpp"
 
 using namespace reServ;
@@ -37,6 +37,8 @@ int main(int argc, char* argv[]) {
         Logger::instance().log(LogLevel::Error, "Can not parse args - using default values - Error: " + std::string(e.what()));
     }
 
+    // Start and run the server
+    Logger::instance().log(LogLevel::Info, "Server config valid. Starting...");
     Server tcpServer(config);
     return tcpServer.run();
 }

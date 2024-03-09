@@ -1,13 +1,3 @@
-#
-# Create CMake DEBUG/RELEASE Configuration in the "debug/release" folder:     
-#   > cmake -DCMAKE_BUILD_TYPE=Debug -B build/debug
-#   > cmake -DCMAKE_BUILD_TYPE=Release -B build/release
-#
-# Execute CMake configuration to run the build:         
-#   > cmake --build build/debug
-#   > cmake --build build/release
-#
-
 cmake_minimum_required(VERSION 3.0)
 
 # Set language configuration, compiler and compiler flags
@@ -30,12 +20,28 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/x64/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/x64/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/x64/bin)
 
-include_directories(${CMAKE_SOURCE_DIR}/lib/openssl/include)
-link_directories(${CMAKE_SOURCE_DIR}/lib/openssl)
+# Find OpenSSL
+find_package(OpenSSL REQUIRED)
+# If the package OpenSSL has been found, several variables will be set. Most important ones are:
+#  OPENSSL_INCLUDE_DIR - the OpenSSL include directory
+#  OPENSSL_LIBRARIES - Link these to use OpenSSL
+
+# Specify the directories to be added to the compiler include paths
+include_directories(${OPENSSL_INCLUDE_DIR})
+    #include_directories(${CMAKE_SOURCE_DIR}/lib/openssl/include)
+
+# Specify the directories to be added to the linker search paths for precompiled/pre-build libraries
+    #link_directories(${CMAKE_SOURCE_DIR}/lib/openssl)
+
+# Specify the directories with their own build-systems (the subdirectory must contain a CMakeLists.txt file)
+add_subdirectory(${CMAKE_SOURCE_DIR}/lib/catch2)
 
 # Add the executable files (all .cpp files that need to be compiled and linked)
 file(GLOB_RECURSE SOURCES src/*.cpp)
 add_executable(${PROJECT_NAME} ${SOURCES})
+file(GLOB_RECURSE TEST_SOURCES test/*.cpp)
+add_executable(tests ${TEST_SOURCES})
 
 # Now that the target is defined, link the libraries to it
-target_link_libraries(${PROJECT_NAME} ssl crypto)
+target_link_libraries(${PROJECT_NAME} ${OPENSSL_LIBRARIES})
+target_link_libraries(tests PRIVATE Catch2::Catch2WithMain)

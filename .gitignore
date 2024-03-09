@@ -32,7 +32,3 @@
 *.app
 
 /build
-/debug
-/release
-/example_ws
-/lib

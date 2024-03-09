@@ -1,10 +1,11 @@
-#ifndef RESERV_SERVER_H
-#define RESERV_SERVER_H
+#ifndef RESERV_SERVER_CORE_H
+#define RESERV_SERVER_CORE_H
 
 #include "enums.hpp"
 #include "helper.hpp"
 #include "logger.hpp"
 #include "responseMessages.hpp"
+#include "serverMessageHandler.hpp"
 #include "wsConfig.hpp"
 
 #include <arpa/inet.h>
@@ -50,11 +51,11 @@ class Server {
 
   public:
     Server(const WsConfig& config)
-        : _config(config)
-        , _serverAddrListFull(nullptr)
-        , _maxBgThreadId(0)
+        : _epollfd(-1)
         , _mainSocketfd(-1)
-        , _epollfd(-1)
+        , _maxBgThreadId(0)
+        , _config(config)
+        , _serverAddrListFull(nullptr)
         , _clientConnections()
         , _requestQueue()
         , _threadPool()
@@ -92,7 +93,7 @@ class Server {
             epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &event);
 
             // Start the MAIN EVENT LOOP (that currently can never finish, just crash via execption)
-            _logger.log(LogLevel::Info, "Server running. Main Socket listening on port " + std::to_string(_config.port) + "...");
+            _logger.log(LogLevel::Info, "Server running: Main Socket listening on port " + std::to_string(_config.port));
             while(true) {
                 std::vector<epoll_event> events(_config.maxEpollEvents);
                 int numEvents = epoll_wait(_epollfd, &events[0], _config.maxEpollEvents, -1);
@@ -313,42 +314,8 @@ class Server {
                     // ... create response
                     // ....
 
-                    size_t index                        = 0;
-                    const std::vector<uint8_t>& message = request.second;
-
-                    uint8_t finNopcode  = message[index++];
-                    uint8_t maskNlength = message[index++];
-
-                    uint64_t payloadLength = maskNlength & 0x7F;
-                    if(payloadLength == 126) {
-                        payloadLength = (message[index++] << 8) | message[index++];
-                    } else if(payloadLength == 127) {
-                        payloadLength = 0;
-                        for(int i = 0; i < 8; i++) {
-                            payloadLength = (payloadLength << 8) | message[index++];
-                        }
-                    }
-
-                    std::vector<uint8_t> maskingKey;
-                    if(maskNlength & 0x80) {
-                        for(int i = 0; i < 4; i++) {
-                            maskingKey.push_back(message[index++]);
-                        }
-                    }
-
-                    std::vector<uint8_t> payloadData(payloadLength);
-                    for(uint64_t i = 0; i < payloadLength; i++) {
-                        payloadData[i] = message[index++];
-                        if(!maskingKey.empty()) {
-                            payloadData[i] ^= maskingKey[i % 4];
-                        }
-                    }
-
-                    const std::string payloadStr(payloadData.begin(), payloadData.end());
-                    std::cout << payloadStr << std::endl;
-                    // return payloadData;
-
-                    // ...
+                    auto message = parseWsMessage(request.second);
+                    std::cout << "Message: " << message << std::endl;
                 }
             }
         } catch(const std::exception& e) {

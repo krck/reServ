@@ -5,7 +5,7 @@
             "type": "shell",
             "label": "BUILD DEBUG (CMake)",
             "detail": "Run CMake with DEBUG settings and create the new executable in the DEBUG folder",
-            "command": "cmake -B build/debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build/debug",
+            "command": "cmake -DCMAKE_BUILD_TYPE=Debug -B build/debug && cmake --build build/debug",
             "group": "build"
         },
         {
@@ -14,6 +14,16 @@
             "detail": "Run CMake with RELEASE settings and create the new executable in the RELEASE folder",
             "command": "cmake -DCMAKE_BUILD_TYPE=Release -B build/release && cmake --build build/release",
             "group": "build"
+        },
+        {
+            "type": "shell",
+            "label": "BUILD TESTS (CMake)",
+            "detail": "Run the Catch2 tests using the executable in the debug/x64/bin folder",
+            "command": "cmake --build ${workspaceFolder}/build/debug --target tests",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            }
         }
     ]
 }
