@@ -1,7 +1,7 @@
 #ifndef RESERV_ENUMS_H
 #define RESERV_ENUMS_H
 
-namespace reServ {
+namespace reServ::Common {
 
 // Simple validation codes for the WebSocket handshake
 enum class HandshakeValidationCode {
@@ -11,6 +11,6 @@ enum class HandshakeValidationCode {
     VersionNotSupported = 3,
 };
 
-} // namespace reServ
+} // namespace reServ::Common
 
 #endif

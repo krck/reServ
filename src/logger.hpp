@@ -8,7 +8,7 @@
 #include <string>
 #include <thread>
 
-namespace reServ {
+namespace reServ::Common {
 
 // Enum - Log levels
 enum class LogLevel {
@@ -106,6 +106,6 @@ class Logger {
     std::mutex queueMutex;
 };
 
-} // namespace reServ
+} // namespace reServ::Common
 
 #endif

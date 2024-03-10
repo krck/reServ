@@ -1,11 +1,11 @@
-#ifndef RESERV_WSCONFIG_H
-#define RESERV_WSCONFIG_H
+#ifndef RESERV_SERVERCONFIG_H
+#define RESERV_SERVERCONFIG_H
 
 #include <string>
 
-namespace reServ {
+namespace reServ::Server {
 
-struct WsConfig {
+struct ServerConfig {
     // Dynamic/Args configuration
     int port                      = 8080;
     std::string wsVersion         = "13";
@@ -13,7 +13,7 @@ struct WsConfig {
     int maxEpollEvents            = 128;
     int maxPayloadLength          = 16 * 1024 * 1024;
     int idleTimeout               = 16;
-    bool closeOnBackpressureLimit = false;
+    bool closeOnBackPressureLimit = false;
     bool resetIdleTimeoutOnSend   = false;
     bool sendPingsAutomatically   = true;
     // int compression;
@@ -22,6 +22,6 @@ struct WsConfig {
     static const int recvBufferSize = 1024;
 };
 
-} // namespace reServ
+} // namespace reServ::Server
 
 #endif

@@ -63,6 +63,20 @@
         "complex": "cpp",
         "iomanip": "cpp",
         "cinttypes": "cpp",
-        "*.inc": "cpp"
-    }
+        "*.inc": "cpp",
+        "chrono": "cpp",
+        "set": "cpp",
+        "optional": "cpp",
+        "fstream": "cpp",
+        "variant": "cpp"
+    },
+    "cSpell.words": [
+        "addrinfos",
+        "CONNECTIONHANDLER",
+        "EPOLLET",
+        "epollfd",
+        "EPOLLIN",
+        "RESERV",
+        "Socketfd"
+    ]
 }

@@ -1,12 +1,11 @@
-#ifndef RESERV_SERVER_CORE_H
-#define RESERV_SERVER_CORE_H
+#ifndef RESERV_SERVER_H
+#define RESERV_SERVER_H
 
 #include "enums.hpp"
-#include "helper.hpp"
 #include "logger.hpp"
-#include "responseMessages.hpp"
+#include "serverConfig.hpp"
+#include "serverConnectionHandler.hpp"
 #include "serverMessageHandler.hpp"
-#include "wsConfig.hpp"
 
 #include <arpa/inet.h>
 #include <atomic>
@@ -28,29 +27,13 @@
 #include <unistd.h>
 #include <unordered_map>
 
-namespace reServ {
+namespace reServ::Server {
+
+using namespace reServ::Common;
 
 class Server {
-  private:
-    struct Connection {
-      public:
-        const int clientSocketfd;
-        const sockaddr_storage clientAddr;
-        const std::string clientAddrStr;
-
-      public:
-        Connection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr)
-            : clientSocketfd(clientSocketfd), clientAddr(clientAddr), clientAddrStr(clientAddrStr) {}
-
-        // Delete the copy constructor and copy assignment operator
-        Connection(const Connection&)            = delete;
-        Connection& operator=(const Connection&) = delete;
-
-        virtual ~Connection() = default;
-    };
-
   public:
-    Server(const WsConfig& config)
+    Server(const ServerConfig& config)
         : _epollfd(-1)
         , _mainSocketfd(-1)
         , _maxBgThreadId(0)
@@ -60,9 +43,10 @@ class Server {
         , _requestQueue()
         , _threadPool()
         , _runBgThreads(true)
+        , _serverConnectionHandler(ServerConnectionHandler(config))
         , _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
-        _clientConnections.reserve(1000);
+        _clientConnections.reserve(200);
         // Initialize the background-thread pool that will process the incoming requests (-1 for main thread)
         const unsigned int numThreads = _maxBgThreadId = (std::thread::hardware_concurrency() - 1);
         for(unsigned int i = 0; i < numThreads; i++) {
@@ -92,7 +76,7 @@ class Server {
             event.data.fd = _mainSocketfd;
             epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &event);
 
-            // Start the MAIN EVENT LOOP (that currently can never finish, just crash via execption)
+            // Start the MAIN EVENT LOOP (that currently can never finish, just crash via exception)
             _logger.log(LogLevel::Info, "Server running: Main Socket listening on port " + std::to_string(_config.port));
             while(true) {
                 std::vector<epoll_event> events(_config.maxEpollEvents);
@@ -100,7 +84,11 @@ class Server {
                 for(int i = 0; i < numEvents; i++) {
                     if(events[i].data.fd == _mainSocketfd) {
                         // New client connection, if the "write" event is on the main listening socket
-                        handleNewConnection();
+                        auto newConnection = _serverConnectionHandler.handleNewConnection(_mainSocketfd, _epollfd);
+                        if(newConnection.clientSocketfd != -1) {
+                            std::lock_guard<std::mutex> lock(_mutex);
+                            _clientConnections.insert(std::make_pair(newConnection.clientSocketfd, std::make_unique<Connection>(newConnection)));
+                        }
                     } else {
                         // Existing client activity, if the "write" event is on any other (client) socket
                         handleIncomingData(events[i]);
@@ -109,7 +97,7 @@ class Server {
             }
             return true;
         } catch(const std::exception& e) {
-            _logger.log(LogLevel::Error, "TCP Server: " + std::string(e.what()));
+            _logger.log(LogLevel::Error, "Server: " + std::string(e.what()));
             return false;
         }
     }
@@ -125,7 +113,7 @@ class Server {
         // Free the linked list of Server addrinfos
         freeaddrinfo(_serverAddrListFull);
 
-        // Stop any communicaitono with "shutdown" and free the socket descriptor with "close"
+        // Stop any communication with "shutdown" and free the socket descriptor with "close"
         // shutdown(_mainSocketfd, SHUT_RDWR);
         close(_mainSocketfd);
         close(_epollfd);
@@ -154,7 +142,7 @@ class Server {
 
         // Loop through all the Server IP address results and bind a new socket to the first possible
         for(serverAddr = _serverAddrListFull; serverAddr != nullptr; serverAddr = serverAddr->ai_next) {
-            // Create a new socket based on the current serverAddress, wich was configured based on the "serverHints"
+            // Create a new socket based on the current serverAddress, which was configured based on the "serverHints"
             if((serverSocket = socket(serverAddr->ai_family, serverAddr->ai_socktype, serverAddr->ai_protocol)) < 0) {
                 continue;
             }
@@ -185,84 +173,6 @@ class Server {
         return serverSocket;
     }
 
-    bool handleNewConnection() {
-        int newClientSocketFd = -1;
-        sockaddr_storage clientAddr {};
-        socklen_t clientAddrSize = sizeof(clientAddr);
-        try {
-            // Accept a new connection on the main/listening socket (creates a new client socket and establishes the connection)
-            newClientSocketFd               = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
-            const std::string clientAddrStr = extractIpAddrString(&clientAddr);
-            if(newClientSocketFd < 0)
-                return false;
-
-            // Receive initial data from the client
-            char recvBuffer[_config.recvBufferSize];
-            ssize_t bytesRead = recv(newClientSocketFd, recvBuffer, _config.recvBufferSize, 0);
-            const std::string request(recvBuffer, bytesRead);
-            if(bytesRead > 0) {
-                std::string response;
-                if(isWebSocketUpgradeRequest(request)) {
-                    // NEW WEBSOCKET CONNECTION (upgrade-request)
-                    std::map<std::string, std::string> reqHeaders;
-                    const HandshakeValidationCode validationCode = validateWebSocketUpgradeHeader(request, _config.wsVersion, reqHeaders);
-
-                    if(validationCode == HandshakeValidationCode::OK) {
-                        // The "Sec-WebSocket-Accept" header must be created and added to the response
-                        std::string acceptKey = createWebSocketAcceptKey(reqHeaders["sec-websocket-key"]);
-                        response              = getResponse_Handshake_SwitchingProtocols(acceptKey);
-                    } else if(validationCode == HandshakeValidationCode::BadRequest) {
-                        response = getResponse_Handshake_BadRequest();
-                    } else if(validationCode == HandshakeValidationCode::Forbidden) {
-                        response = getResponse_Handshake_Forbidden();
-                    } else if(validationCode == HandshakeValidationCode::VersionNotSupported) {
-                        response = getResponse_UpgradeRequired(_config.wsVersion);
-                    }
-                } else if(isHttpRequest(request)) {
-                    // NEW HTTP CONNECTION (not implemented)
-                    std::string res = getResponse_Handshake_NotImplemented();
-                }
-
-                // TODO:
-                // Check if it makes sense, so setup a "Connection" in case of any other HTTP request
-                // (if this Connection is closed immediateley this might not be needed - or is it helpfull for future use-cases?)
-
-                std::lock_guard<std::mutex> lock(_mutex);
-                std::unique_ptr<Connection> wsPtr(new Connection(newClientSocketFd, clientAddr, clientAddrStr));
-                _clientConnections.insert(std::make_pair(newClientSocketFd, std::move(wsPtr)));
-
-                // If all is fine so far (response generated + client connection saved):
-                // then set the client socket to non-blocking mode and add it to the epoll instance
-                fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
-                epoll_event event;
-                event.data.fd = newClientSocketFd;
-                event.events  = EPOLLIN | EPOLLET; // read events in edge-triggered mode
-                epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event);
-
-                ssize_t bytesWritten = send(newClientSocketFd, response.c_str(), response.length(), 0);
-                _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
-                return (bytesWritten < 0);
-            } else {
-                // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
-                // (control flow via exception since all the cleanup logic is in the catch already)
-                throw std::runtime_error("Client Connection closed from remote: " + clientAddrStr);
-            }
-        } catch(const std::exception& e) {
-            _logger.log(LogLevel::Error, "New connection: " + std::string(e.what()));
-            // Close the new Socket something went wrong
-            if(newClientSocketFd >= 0) {
-                close(newClientSocketFd);
-                epoll_ctl(_epollfd, EPOLL_CTL_DEL, newClientSocketFd, nullptr);
-            }
-            // Cleanup all possible remains of the new Socket, depending on where it failed
-            if(_clientConnections.find(newClientSocketFd) != _clientConnections.end()) {
-                std::lock_guard<std::mutex> lock(_mutex);
-                _clientConnections.erase(newClientSocketFd);
-            }
-            return false;
-        }
-    }
-
     void handleIncomingData(const epoll_event& pollEvent) {
         const int clientSockfd = pollEvent.data.fd;
         try {
@@ -288,7 +198,7 @@ class Server {
             _clientConnections.erase(clientSockfd);
             close(clientSockfd);
 
-            // Log Info (not Error) since its is a expectd result for a connection to be closed somehow
+            // Log Info (not Error) since its is a expected result for a connection to be closed somehow
             _logger.log(LogLevel::Info, "Handle data: " + std::string(e.what()));
         }
     }
@@ -338,7 +248,7 @@ class Server {
     int _epollfd;
     int _mainSocketfd;
     int _maxBgThreadId;
-    const WsConfig& _config;
+    const ServerConfig& _config;
     addrinfo* _serverAddrListFull;
     // Server Clients
     std::unordered_map<int, std::unique_ptr<Connection>> _clientConnections;
@@ -348,9 +258,10 @@ class Server {
     std::condition_variable _cv;
     std::mutex _mutex;
     // Server Utility
+    const ServerConnectionHandler _serverConnectionHandler;
     Logger& _logger;
 };
 
-} // namespace reServ
+} // namespace reServ::Server
 
 #endif

@@ -1,10 +1,10 @@
-#include "serverCore.hpp"
-#include "wsConfig.hpp"
+#include "server.hpp"
 
-using namespace reServ;
+using namespace reServ::Server;
+using namespace reServ::Common;
 
 int main(int argc, char* argv[]) {
-    WsConfig config;
+    ServerConfig config;
 
     try {
         std::string argKey, argVal;
@@ -25,8 +25,8 @@ int main(int argc, char* argv[]) {
                 config.maxPayloadLength = std::stoi(argVal);
             } else if(argKey == "--idleTimeout") {
                 config.idleTimeout = std::stoi(argVal);
-            } else if(argKey == "--closeOnBackpressureLimit") {
-                config.closeOnBackpressureLimit = std::stoi(argVal) != 0;
+            } else if(argKey == "--closeOnBackPressureLimit") {
+                config.closeOnBackPressureLimit = std::stoi(argVal) != 0;
             } else if(argKey == "--resetIdleTimeoutOnSend") {
                 config.resetIdleTimeoutOnSend = std::stoi(argVal) != 0;
             } else if(argKey == "--sendPingsAutomatically") {

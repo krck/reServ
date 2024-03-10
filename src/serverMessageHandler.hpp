@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace reServ {
+namespace reServ::Server {
 
 std::string parseWsMessage(const std::vector<uint8_t>& message) {
     size_t index        = 0;
@@ -39,6 +39,6 @@ std::string parseWsMessage(const std::vector<uint8_t>& message) {
     return std::string(payloadData.begin(), payloadData.end());
 }
 
-} // namespace reServ
+} // namespace reServ::Server
 
 #endif
