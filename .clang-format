@@ -23,10 +23,11 @@ BinPackParameters: true
 BreakBeforeBinaryOperators: None
 BreakBeforeBraces: Attach
 BreakBeforeTernaryOperators: true
-BreakConstructorInitializers: BeforeComma
 CompactNamespaces: false
 ColumnLimit: 150
-ConstructorInitializerAllOnOneLineOrOnePerLine: true
+ConstructorInitializerIndentWidth: 2
+BreakConstructorInitializers: AfterColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: false
 Cpp11BracedListStyle: false
 DisableFormat: false
 FixNamespaceComments: true

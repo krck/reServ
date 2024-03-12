@@ -53,7 +53,7 @@ class Logger {
         logThread = std::thread(&Logger::processLogs, this);
     }
 
-    // Delete copy-construcor and copy-assignment operator
+    // Delete copy-constructor and copy-assignment operator
     Logger(Logger const&)         = delete;
     void operator=(Logger const&) = delete;
 
