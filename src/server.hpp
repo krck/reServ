@@ -24,7 +24,7 @@ using namespace reServ::Common;
 class Server {
   public:
     Server(const ServerConfig& config) :
-      _epollfd(-1), _mainSocketfd(-1), _config(config), _serverAddrListFull(nullptr), _clientConnections(), _messageQueue(),
+      _epollfd(-1), _mainSocketfd(-1), _config(config), _serverAddrListFull(nullptr), _messageQueue(), _clientConnections(),
       _serverConnectionHandler(ServerConnectionHandler(config)), _serverInputHandler(ServerInputHandler(config)), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(200);
@@ -69,8 +69,7 @@ class Server {
 
                 // Handle OUTPUT (send new messages to the clients)
                 while(!_messageQueue.empty()) {
-                    ClientMessage* message = _messageQueue.front().get();
-
+                    // ClientMessage* message = _messageQueue.front().get();
                     // ...
 
                     _messageQueue.pop();
@@ -204,7 +203,7 @@ class Server {
             if(bytesRead > 0) {
                 ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuffer);
                 _messageQueue.push(std::make_unique<ClientMessage>(message));
-                _logger.log(LogLevel::Info, "Received message: " + message.messagePlainText);
+                _logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
                 return true;
             } else {
                 // In case recv returns 0, the connection should be closed (client has closed)

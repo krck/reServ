@@ -19,12 +19,14 @@ using namespace reServ::Common;
 struct ClientMessage {
   public:
     const int clientSocketfd;
-    const int messageType;
-    const std::string messagePlainText;
+    const WsFrame_FIN fin;
+    const WsFrame_RSV rsv;
+    const WsFrame_OPC opc; // OpCode
+    const std::string payloadPlainText;
 
   public:
-    ClientMessage(int clientSocketfd, int messageType, const std::string& messagePlainText) :
-      clientSocketfd(clientSocketfd), messageType(messageType), messagePlainText(messagePlainText) {}
+    ClientMessage(int clientSocketfd, WsFrame_FIN fin, WsFrame_RSV rsv, WsFrame_OPC opc, const std::string& payloadPlainText) :
+      clientSocketfd(clientSocketfd), fin(fin), rsv(rsv), opc(opc), payloadPlainText(payloadPlainText) {}
 
     ~ClientMessage() = default;
 };
@@ -47,11 +49,12 @@ class ServerInputHandler {
         // Only if the FIN bit is set, the message is returned to the server, where it is then added to the message queue
         // ...
 
-        return { clientSocketfd, 0, parseWsFrame(recvBuffer) };
+        auto message = parseWsFrame(clientSocketfd, recvBuffer);
+        return message;
     }
 
   private:
-    std::string parseWsFrame(const std::vector<rsByte>& messageBytes) const {
+    ClientMessage parseWsFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
         // ----------------------------------------------------------------------------------------------------------------
         // ---------------------------------------- Parse WebSocket Protocol Data -----------------------------------------
         // ------------------------------- https://www.rfc-editor.org/rfc/rfc6455#section-5 -------------------------------
@@ -115,7 +118,7 @@ class ServerInputHandler {
             payloadData[i] = (messageBytes[frameIdx++] ^ ((maskingKey >> (8 * (3 - i % 4))) & 0xFF));
         }
 
-        return std::string(payloadData.begin(), payloadData.end());
+        return { clientSocketfd, fin, rsv, opc, std::string(payloadData.begin(), payloadData.end()) };
     }
 
   private:
