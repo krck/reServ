@@ -69,10 +69,11 @@ class Server {
 
                 // Handle OUTPUT (send new messages to the clients)
                 while(!_messageQueue.empty()) {
-                    auto message = _messageQueue.front();
-                    _messageQueue.pop();
+                    ClientMessage* message = _messageQueue.front().get();
 
                     // ...
+
+                    _messageQueue.pop();
                 }
             }
             return true;
@@ -201,9 +202,9 @@ class Server {
             std::vector<rsByte> recvBuffer(_config.recvBufferSize);
             ssize_t bytesRead = recv(client->clientSocketfd, &recvBuffer[0], _config.recvBufferSize, 0);
             if(bytesRead > 0) {
-                auto message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuffer);
-                _messageQueue.push({ client->clientSocketfd, message });
-                _logger.log(LogLevel::Info, "Received message: " + message);
+                ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuffer);
+                _messageQueue.push(std::make_unique<ClientMessage>(message));
+                _logger.log(LogLevel::Info, "Received message: " + message.messagePlainText);
                 return true;
             } else {
                 // In case recv returns 0, the connection should be closed (client has closed)
@@ -248,8 +249,8 @@ class Server {
     const ServerConfig& _config;
     addrinfo* _serverAddrListFull;
     // Server Clients
+    std::queue<std::unique_ptr<ClientMessage>> _messageQueue;
     std::unordered_map<int, std::unique_ptr<ClientConnection>> _clientConnections;
-    std::queue<std::pair<int, std::string>> _messageQueue;
     // Server Utility
     const ServerConnectionHandler _serverConnectionHandler;
     const ServerInputHandler _serverInputHandler;

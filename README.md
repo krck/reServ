@@ -16,6 +16,10 @@ reServ is a WebSocket <b>relay Server</b>, written in modern C++ with the purpos
 
 The server is leveraging the Linux/Unix socket and networking facilities to provide solid WebSocket communication. The project focus is on very specialized (nostr tailored) and performant WebSocket communication, with probably little general-purpose use or customization options.
 
+Details about the WebSocket protocol can be found in/on:
+- The [official RFC documentation](https://www.rfc-editor.org/rfc/rfc6455)
+- The [mdn web docs tutorial](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers)
+
 Details about nostr and its protocol can be found here:
 - The [official website](https://nostr.com/)
 - The [basic idea](https://nostr.how/en/what-is-nostr) of nostr and its [initial description](https://fiatjaf.com/nostr.html)
