@@ -197,11 +197,22 @@ class Server {
 
     bool handleMessageInput(const ClientConnection* const client) {
         try {
-            // Read incoming data from the client socket
-            std::vector<rsByte> recvBuffer(_config.recvBufferSize);
-            ssize_t bytesRead = recv(client->clientSocketfd, &recvBuffer[0], _config.recvBufferSize, 0);
-            if(bytesRead > 0) {
-                ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuffer);
+            std::vector<rsByte> recvBuf(_config.recvBufferSize);
+            ssize_t bytesRecv = 0; // Overall bytes received (incoming message)
+            ssize_t tmpRecv   = 0; // "Batch" Bytes received in one recv call
+
+            // Receive incoming data, until there is no more data to read on the client socket
+            while((tmpRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0)) > 0) {
+                bytesRecv += tmpRecv;
+
+                // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
+                // TODO: This could be easily abused by a client to allocate a lot of memory on the server!!!!
+                if(bytesRecv == recvBuf.size())
+                    recvBuf.resize(recvBuf.size() * 2);
+            }
+
+            if(bytesRecv > 0) {
+                ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuf);
                 _messageQueue.push(std::make_unique<ClientMessage>(message));
                 _logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
                 return true;
