@@ -7,6 +7,7 @@
 #include "serverConfig.hpp"
 #include "serverConnectionHandler.hpp"
 #include "serverInputHandler.hpp"
+#include "serverOutputHandler.hpp"
 #include "types.hpp"
 
 #include <arpa/inet.h>
@@ -27,7 +28,8 @@ class Server {
   public:
     Server(const ServerConfig& config) :
       _epollfd(-1), _mainSocketfd(-1), _config(config), _serverAddrListFull(nullptr), _messageQueue(), _clientConnections(),
-      _serverConnectionHandler(ServerConnectionHandler(config)), _serverInputHandler(ServerInputHandler(config)), _logger(Logger::instance()) {
+      _serverConnectionHandler(ServerConnectionHandler(config)), _serverOutputHandler(ServerOutputHandler(config)),
+      _serverInputHandler(ServerInputHandler(config)), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(200);
     }
@@ -71,9 +73,8 @@ class Server {
 
                 // Handle OUTPUT (send new messages to the clients)
                 while(!_messageQueue.empty()) {
-                    // ClientMessage* message = _messageQueue.front().get();
-                    // ...
-
+                    ClientMessage* message = _messageQueue.front().get();
+                    _serverOutputHandler.handleOutputData(_clientConnections, message);
                     _messageQueue.pop();
                 }
             }
@@ -265,6 +266,7 @@ class Server {
     std::unordered_map<int, std::unique_ptr<ClientConnection>> _clientConnections;
     // Server Utility
     const ServerConnectionHandler _serverConnectionHandler;
+    const ServerOutputHandler _serverOutputHandler;
     const ServerInputHandler _serverInputHandler;
     Logger& _logger;
 };

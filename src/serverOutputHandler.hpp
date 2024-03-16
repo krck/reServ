@@ -1,14 +1,17 @@
 #ifndef RESERV_SERVEROUTPUTHANDLER_H
 #define RESERV_SERVEROUTPUTHANDLER_H
 
+#include "clientConnection.hpp"
 #include "clientMessage.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
 #include "serverConfig.hpp"
 #include "types.hpp"
 
+#include <memory>
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace reServ::Server {
@@ -26,13 +29,19 @@ class ServerOutputHandler {
     ~ServerOutputHandler() = default;
 
   public:
-    bool handleOutputData(const ClientMessage* const message) const {
-        // Add some logic for "split" messages here
-        // WebSocket: Message only ends, when the FIN bit is set (one client can send multiple messages in one packet)
-        // ...
-        // Caching logic, that stores the last message per "clientSocketfd" and appends the new one to it, if the FIN bit is not set
-        // Only if the FIN bit is set, the message is returned to the server, where it is then added to the message queue
-        // ...
+    bool handleOutputData(const std::unordered_map<int, std::unique_ptr<ClientConnection>>& clients, const ClientMessage* const message) const {
+        if(_config.outputBehavior == OutputBehavior::Echo) {
+            // Echo the message back to the client
+            // ...
+        } else if(_config.outputBehavior == OutputBehavior::Broadcast) {
+            // Broadcast the message to all clients
+            // ...
+        } else if(_config.outputBehavior == OutputBehavior::Custom) {
+            // Custom output behavior
+            // ...
+        }
+
+        return true;
     }
 
   private:
