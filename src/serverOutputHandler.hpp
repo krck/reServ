@@ -1,6 +1,7 @@
-#ifndef RESERV_SERVER_INPUTHANDLER_H
-#define RESERV_SERVER_INPUTHANDLER_H
+#ifndef RESERV_SERVEROUTPUTHANDLER_H
+#define RESERV_SERVEROUTPUTHANDLER_H
 
+#include "clientMessage.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
 #include "serverConfig.hpp"
@@ -12,6 +13,7 @@
 
 namespace reServ::Server {
 
+using namespace reServ::Client;
 using namespace reServ::Common;
 
 //
@@ -24,6 +26,16 @@ class ServerOutputHandler {
     ~ServerOutputHandler() = default;
 
   public:
+    bool handleOutputData(const ClientMessage* const message) const {
+        // Add some logic for "split" messages here
+        // WebSocket: Message only ends, when the FIN bit is set (one client can send multiple messages in one packet)
+        // ...
+        // Caching logic, that stores the last message per "clientSocketfd" and appends the new one to it, if the FIN bit is not set
+        // Only if the FIN bit is set, the message is returned to the server, where it is then added to the message queue
+        // ...
+    }
+
+  private:
     std::vector<rsByte> generateWebSocketFrame(bool fin, uint8_t opcode, bool masked, const std::string& payload) {
         std::vector<rsByte> frame;
 

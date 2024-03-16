@@ -1,5 +1,5 @@
-#ifndef RESERV_SERVER_CONNECTIONHANDLER_H
-#define RESERV_SERVER_CONNECTIONHANDLER_H
+#ifndef RESERV_SERVERCONNECTIONHANDLER_H
+#define RESERV_SERVERCONNECTIONHANDLER_H
 
 #include "enums.hpp"
 #include "logger.hpp"
@@ -20,25 +20,6 @@ namespace reServ::Server {
 
 using namespace reServ::Common;
 
-//
-// ClientConnection
-//
-struct ClientConnection {
-  public:
-    const int clientSocketfd;
-    const sockaddr_storage clientAddr;
-    const std::string clientAddrStr;
-
-  public:
-    ClientConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr) :
-      clientSocketfd(clientSocketfd), clientAddr(clientAddr), clientAddrStr(clientAddrStr) {}
-
-    ~ClientConnection() = default;
-};
-
-//
-// ServerConnectionHandler
-//
 class ServerConnectionHandler {
   private:
     struct BIOFreeAll {

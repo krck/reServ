@@ -25,12 +25,16 @@ int main(int argc, char* argv[]) {
                 config.maxPayloadLength = std::stoi(argVal);
             } else if(argKey == "--idleTimeout") {
                 config.idleTimeout = std::stoi(argVal);
+            } else if(argKey == "--compression") {
+                config.compression = std::stoi(argVal);
             } else if(argKey == "--closeOnBackPressureLimit") {
                 config.closeOnBackPressureLimit = std::stoi(argVal) != 0;
             } else if(argKey == "--resetIdleTimeoutOnSend") {
                 config.resetIdleTimeoutOnSend = std::stoi(argVal) != 0;
             } else if(argKey == "--sendPingsAutomatically") {
                 config.sendPingsAutomatically = std::stoi(argVal) != 0;
+            } else if(argKey == "--outputBehavior") {
+                config.outputBehavior = static_cast<OutputBehavior>(std::stoi(argVal));
             }
         }
     } catch(const std::exception& e) {

@@ -1,6 +1,7 @@
 #ifndef RESERV_SERVER_H
 #define RESERV_SERVER_H
 
+#include "clientConnection.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
 #include "serverConfig.hpp"
@@ -19,6 +20,7 @@
 
 namespace reServ::Server {
 
+using namespace reServ::Client;
 using namespace reServ::Common;
 
 class Server {
