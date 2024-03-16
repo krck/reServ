@@ -1,0 +1,12 @@
+{
+    "outdir": "./reports/servers",
+    "servers": [
+        {
+            "agent": "reServ",
+            "url": "ws://172.17.0.1:8080"
+        }
+    ],
+    "cases": ["1.*"],
+    "exclude-cases": [],
+    "exclude-agent-cases": {}
+}

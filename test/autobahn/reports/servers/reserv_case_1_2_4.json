@@ -1,0 +1,61 @@
+{
+   "agent": "reServ",
+   "behavior": "FAILED",
+   "behaviorClose": "FAILED",
+   "case": 12,
+   "closedByMe": false,
+   "createStats": true,
+   "createWirelog": true,
+   "description": "Send binary message message with payload of length 127.",
+   "droppedByMe": true,
+   "duration": 1710616095269,
+   "expectation": "Receive echo'ed binary message (with payload as sent). Clean close with normal code.",
+   "expected": {},
+   "expectedClose": {},
+   "failedByMe": false,
+   "httpRequest": "GET / HTTP/1.1\r\nUser-Agent: AutobahnTestSuite/0.8.2-0.10.9\r\nHost: 172.17.0.1:8080\r\nUpgrade: WebSocket\r\nConnection: Upgrade\r\nPragma: no-cache\r\nCache-Control: no-cache\r\nSec-WebSocket-Key: m2mc/wHh8e1Oqq7CuwBcqg==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+   "httpResponse": "?",
+   "id": "1.2.4",
+   "isServer": false,
+   "localCloseCode": null,
+   "localCloseReason": null,
+   "received": [],
+   "remoteCloseCode": null,
+   "remoteCloseReason": null,
+   "reportCompressionRatio": false,
+   "reportTime": false,
+   "result": "Actual events differ from any expected.",
+   "resultClose": "The WebSocket opening handshake was never completed!",
+   "rxFrameStats": {},
+   "rxOctetStats": {
+      "158": 1
+   },
+   "started": "2024-03-16T19:08:10.260Z",
+   "trafficStats": null,
+   "txFrameStats": {},
+   "txOctetStats": {
+      "241": 1
+   },
+   "wasClean": false,
+   "wasCloseHandshakeTimeout": false,
+   "wasNotCleanReason": "peer did not finish (in time) the opening handshake",
+   "wasOpenHandshakeTimeout": true,
+   "wasServerConnectionDropTimeout": false,
+   "wirelog": [
+      [
+         "TO",
+         [
+            241,
+            "474554202f20485454502f312e310d0a557365722d4167656e743a204175746f6261686e5465737453756974652f302e382e322d302e31302e390d0a486f7374 ..."
+         ],
+         false
+      ],
+      [
+         "RO",
+         [
+            158,
+            "485454502f312e3120353031204e6f7420496d706c656d656e7465640a436f6e74656e742d547970653a20746578742f706c61696e0a4163636573732d436f6e ..."
+         ]
+      ]
+   ]
+}

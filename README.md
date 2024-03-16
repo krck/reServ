@@ -2,13 +2,15 @@
 
 table of contents:
 - [1. About](#1-about)
-- [2. Dependencies](#2-dependencies)
-- [3. Tasks](#3-tasks)
-  - [3.1 Basic WebSocket Server Features](#31-basic-websocket-server-features)
-  - [3.2 Advanced WebSocket Server Features](#32-advanced-websocket-server-features)
-  - [3.3 Basic nostr Relay Features](#33-basic-nostr-relay-features)
-  - [3.4 Advanced nostr Relay Features](#34-advanced-nostr-relay-features)
-- [4. Bugs and Testing](#4-bugs-and-testing)
+- [2. Dev Dependencies](#2-dev-dependencies)
+- [3. Dev Testing](#3-dev-testing)
+  - [3.1 WebSocket Protocol](#31-websocket-protocol)
+- [4. Tasks](#4-tasks)
+  - [4.1 Basic WebSocket Server Features](#41-basic-websocket-server-features)
+  - [4.2 Advanced WebSocket Server Features](#42-advanced-websocket-server-features)
+  - [4.3 Basic nostr Relay Features](#43-basic-nostr-relay-features)
+  - [4.4 Advanced nostr Relay Features](#44-advanced-nostr-relay-features)
+- [5. Bugs and Issues](#5-bugs-and-issues)
 
 ## 1. About
 
@@ -25,7 +27,7 @@ Details about nostr and its protocol can be found here:
 - The [basic idea](https://nostr.how/en/what-is-nostr) of nostr and its [initial description](https://fiatjaf.com/nostr.html)
 - The [implementation details](https://github.com/nostr-protocol/nips) on github (NIPs)
 
-## 2. Dependencies
+## 2. Dev Dependencies
 
 |Library        |Source               |Branch         |Info                                                           |
 |---------------|---------------------|---------------|--------------------------------------------------------------|
@@ -37,10 +39,30 @@ Details about nostr and its protocol can be found here:
 - CMake will use the system wide installation (find_package(OpenSSL REQUIRED))
 - Easiest way, due to multiple problems including the git directly as a submodule
 
+## 3. Dev Testing
 
-## 3. Tasks
+### 3.1 WebSocket Protocol
 
-### 3.1 Basic WebSocket Server Features
+The verification of the WebSocket Protocol implementation is done with the [autobahn-testsuite](https://github.com/crossbario/autobahn-testsuite). Since this is based on python2 (which is no longer easily accessible), the best setup is in the provided docker container.
+
+Install the docker engine with [this official guide](https://docs.docker.com/engine/install/)
+(To check on running docker containers use `docker ps` and to kill a running docker container use `docker stop` with the id from ps)
+
+<b>Execute a full test-suite run:</b>
+- First cd to the `./test/autobahn` directory
+- It might be necessary to change the configured IP for your docker installation:
+    - Run `ip -4 addr show docker0 | grep -Po 'inet \K[\d.]+'` to get your local docker host ip
+    - In the `./test/autobahn/config/fuzzingclient.json` file, replace the server url with your local docker host ip
+- Start the reServ Server on the port configured in `fuzzingclient.json`
+- Run (as su): `docker run -it --rm -v "${PWD}/config:/config" -v "${PWD}/reports:/reports" -u $(id -u):$(id -g) crossbario/autobahn-testsuite wstest -m fuzzingclient -s /config/fuzzingclient.json`
+    - On the very first run, the docker container will be downloaded and setup automatically
+    - Again, this only works in the `./test/autobahn` directory, to get the correct path mappings
+- The test output will be written to the `./test/autobahn/reports` directory
+
+
+## 4. Tasks
+
+### 4.1 Basic WebSocket Server Features
 
 - [ ] **Finish the Core Logic: Input**: Fully implement the WebSocket Protocol and correctly parse messages
 - [ ] **Finish the Core Logic: Connection**: Update the connection logic, allow for endpoint handling
@@ -56,22 +78,22 @@ Details about nostr and its protocol can be found here:
 - [ ] **Logging and Monitoring**: Better logs and real-time monitoring capabilities (access logging, audit logging)
 - [ ] **Origin Checks**: Verifies the origin of WebSocket requests (prevent cross-site WebSocket hijacking)
 
-### 3.2 Advanced WebSocket Server Features
+### 4.2 Advanced WebSocket Server Features
 
 - [ ] **IPv6 Support**: Fully implement IPv6 handling (might already work out of the box, but probably not)
 - [ ] **Secure WebSocket (WSS) Support**: Provide encrypted communication for WebSockets, similar to HTTPS for HTTP.
 - [ ] **Multiplexing**: Allows for multiple logical channels over a single TCP connection (Not natively supported by WebSocket protocol)
 
-### 3.3 Basic nostr Relay Features
+### 4.3 Basic nostr Relay Features
 
 - [ ] **[NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md)**: Basic protocol, event, flow
 - [ ] ...
 
-### 3.4 Advanced nostr Relay Features
+### 4.4 Advanced nostr Relay Features
 
 - [ ] ...
 
-## 4. Bugs and Testing
+## 5. Bugs and Issues
 
 BUG severity: 🟢 LOW | 🟡 MED | 🔴 HIGH
 
