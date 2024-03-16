@@ -24,7 +24,7 @@ using namespace reServ::Common;
 class Server {
   public:
     Server(const ServerConfig& config) :
-      _epollfd(-1), _mainSocketfd(-1), _config(config), _serverAddrListFull(nullptr), _clientConnections(), _messageQueue(),
+      _epollfd(-1), _mainSocketfd(-1), _config(config), _serverAddrListFull(nullptr), _messageQueue(), _clientConnections(),
       _serverConnectionHandler(ServerConnectionHandler(config)), _serverInputHandler(ServerInputHandler(config)), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(200);
@@ -69,10 +69,10 @@ class Server {
 
                 // Handle OUTPUT (send new messages to the clients)
                 while(!_messageQueue.empty()) {
-                    auto message = _messageQueue.front();
-                    _messageQueue.pop();
-
+                    // ClientMessage* message = _messageQueue.front().get();
                     // ...
+
+                    _messageQueue.pop();
                 }
             }
             return true;
@@ -197,13 +197,24 @@ class Server {
 
     bool handleMessageInput(const ClientConnection* const client) {
         try {
-            // Read incoming data from the client socket
-            std::vector<rsByte> recvBuffer(_config.recvBufferSize);
-            ssize_t bytesRead = recv(client->clientSocketfd, &recvBuffer[0], _config.recvBufferSize, 0);
-            if(bytesRead > 0) {
-                auto message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuffer);
-                _messageQueue.push({ client->clientSocketfd, message });
-                _logger.log(LogLevel::Info, "Received message: " + message);
+            std::vector<rsByte> recvBuf(_config.recvBufferSize);
+            ssize_t bytesRecv = 0; // Overall bytes received (incoming message)
+            ssize_t tmpRecv   = 0; // "Batch" Bytes received in one recv call
+
+            // Receive incoming data, until there is no more data to read on the client socket
+            while((tmpRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0)) > 0) {
+                bytesRecv += tmpRecv;
+
+                // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
+                // TODO: This could be easily abused by a client to allocate a lot of memory on the server!!!!
+                if(bytesRecv == recvBuf.size())
+                    recvBuf.resize(recvBuf.size() * 2);
+            }
+
+            if(bytesRecv > 0) {
+                ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuf);
+                _messageQueue.push(std::make_unique<ClientMessage>(message));
+                _logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
                 return true;
             } else {
                 // In case recv returns 0, the connection should be closed (client has closed)
@@ -248,8 +259,8 @@ class Server {
     const ServerConfig& _config;
     addrinfo* _serverAddrListFull;
     // Server Clients
+    std::queue<std::unique_ptr<ClientMessage>> _messageQueue;
     std::unordered_map<int, std::unique_ptr<ClientConnection>> _clientConnections;
-    std::queue<std::pair<int, std::string>> _messageQueue;
     // Server Utility
     const ServerConnectionHandler _serverConnectionHandler;
     const ServerInputHandler _serverInputHandler;

@@ -33,7 +33,7 @@ struct ClientConnection {
     ClientConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr) :
       clientSocketfd(clientSocketfd), clientAddr(clientAddr), clientAddrStr(clientAddrStr) {}
 
-    virtual ~ClientConnection() = default;
+    ~ClientConnection() = default;
 };
 
 //
