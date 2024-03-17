@@ -19,7 +19,7 @@
             "type": "shell",
             "label": "BUILD TESTS (CMake)",
             "detail": "Run the Catch2 tests using the executable in the debug/x64/bin folder",
-            "command": "cmake --build ${workspaceFolder}/build/debug --target tests",
+            "command": "cmake -DCMAKE_BUILD_TYPE=Debug -B build/debug && cmake --build ${workspaceFolder}/build/debug --target tests",
             "group": {
                 "kind": "test",
                 "isDefault": true

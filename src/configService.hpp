@@ -52,9 +52,9 @@ class ConfigService {
                 argKey = argv[i];
                 argVal = argv[i + 1];
 
-                if(argKey == "--port" || argKey == "-p") {
+                if(argKey == "--port" || argKey == "--p") {
                     _serverConfig.port = std::stoi(argVal);
-                } else if(argKey == "--wsVersion" || argKey == "-v") {
+                } else if(argKey == "--wsVersion" || argKey == "--v") {
                     _serverConfig.wsVersion = argVal;
                 } else if(argKey == "--maxConnectionBacklog") {
                     _serverConfig.maxConnectionBacklog = std::stoi(argVal);
