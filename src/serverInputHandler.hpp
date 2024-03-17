@@ -23,7 +23,7 @@ class ServerInputHandler {
 
   public:
     ClientMessage handleInputData(int clientSocketfd, const std::vector<rsByte>& recvBuffer) const {
-        // Add some logic for "split" messages here
+        // Add some logic for "fragmented" messages here
         // WebSocket: Message only ends, when the FIN bit is set (one client can send multiple messages in one packet)
         // ...
         // Caching logic, that stores the last message per "clientSocketfd" and appends the new one to it, if the FIN bit is not set
@@ -99,7 +99,7 @@ class ServerInputHandler {
             payloadData[i] = (messageBytes[frameIdx++] ^ ((maskingKey >> (8 * (3 - i % 4))) & 0xFF));
         }
 
-        return { clientSocketfd, fin, rsv, opc, std::string(payloadData.begin(), payloadData.end()) };
+        return { clientSocketfd, fin, rsv, opc, payloadData };
     }
 
   private:
