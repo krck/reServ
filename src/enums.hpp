@@ -5,6 +5,12 @@
 
 namespace reServ::Common {
 
+enum OutputBehavior : rsUInt8 {
+    Echo      = 0,
+    Broadcast = 1,
+    Custom    = 2
+};
+
 // Simple validation codes for the WebSocket handshake
 enum class HandshakeValidationCode {
     OK                  = 0,
@@ -32,6 +38,12 @@ enum WsFrame_OPC : rsByte {
     CLOSE        = 0x8,
     PING         = 0x9,
     PONG         = 0xA
+};
+
+enum class LogLevel {
+    Info,
+    Warning,
+    Error
 };
 
 } // namespace reServ::Common

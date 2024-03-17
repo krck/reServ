@@ -1,6 +1,7 @@
-#ifndef RESERV_SERVER_INPUTHANDLER_H
-#define RESERV_SERVER_INPUTHANDLER_H
+#ifndef RESERV_SERVERINPUTHANDLER_H
+#define RESERV_SERVERINPUTHANDLER_H
 
+#include "clientMessage.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
 #include "serverConfig.hpp"
@@ -11,29 +12,9 @@
 
 namespace reServ::Server {
 
+using namespace reServ::Client;
 using namespace reServ::Common;
 
-//
-// ClientMessage
-//
-struct ClientMessage {
-  public:
-    const int clientSocketfd;
-    const WsFrame_FIN fin;
-    const WsFrame_RSV rsv;
-    const WsFrame_OPC opc; // OpCode
-    const std::string payloadPlainText;
-
-  public:
-    ClientMessage(int clientSocketfd, WsFrame_FIN fin, WsFrame_RSV rsv, WsFrame_OPC opc, const std::string& payloadPlainText) :
-      clientSocketfd(clientSocketfd), fin(fin), rsv(rsv), opc(opc), payloadPlainText(payloadPlainText) {}
-
-    ~ClientMessage() = default;
-};
-
-//
-// ServerInputHandler
-//
 class ServerInputHandler {
   public:
     ServerInputHandler(const ServerConfig& config) : _config(config), _logger(Logger::instance()) {}
@@ -42,19 +23,19 @@ class ServerInputHandler {
 
   public:
     ClientMessage handleInputData(int clientSocketfd, const std::vector<rsByte>& recvBuffer) const {
-        // Add some logic for "split" messages here
+        // Add some logic for "fragmented" messages here
         // WebSocket: Message only ends, when the FIN bit is set (one client can send multiple messages in one packet)
         // ...
         // Caching logic, that stores the last message per "clientSocketfd" and appends the new one to it, if the FIN bit is not set
         // Only if the FIN bit is set, the message is returned to the server, where it is then added to the message queue
         // ...
 
-        auto message = parseWsFrame(clientSocketfd, recvBuffer);
+        auto message = parseWebSocketFrame(clientSocketfd, recvBuffer);
         return message;
     }
 
   private:
-    ClientMessage parseWsFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
+    ClientMessage parseWebSocketFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
         // ----------------------------------------------------------------------------------------------------------------
         // ---------------------------------------- Parse WebSocket Protocol Data -----------------------------------------
         // ------------------------------- https://www.rfc-editor.org/rfc/rfc6455#section-5 -------------------------------
@@ -118,7 +99,7 @@ class ServerInputHandler {
             payloadData[i] = (messageBytes[frameIdx++] ^ ((maskingKey >> (8 * (3 - i % 4))) & 0xFF));
         }
 
-        return { clientSocketfd, fin, rsv, opc, std::string(payloadData.begin(), payloadData.end()) };
+        return { clientSocketfd, fin, rsv, opc, payloadData };
     }
 
   private:

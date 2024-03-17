@@ -64,9 +64,10 @@ Install the docker engine with [this official guide](https://docs.docker.com/eng
 
 ### 4.1 Basic WebSocket Server Features
 
-- [ ] **Finish the Core Logic: Input**: Fully implement the WebSocket Protocol and correctly parse messages
-- [ ] **Finish the Core Logic: Connection**: Update the connection logic, allow for endpoint handling
+- [x] **Finish the Core Logic: Input**: Fully implement the WebSocket Protocol and correctly parse messages
+- [x] **Finish the Core Logic: Connection**: Update the connection logic, allow for endpoint handling
 - [ ] **Finish the Core Logic: Output**: Implement a basic (default) output that includes "echo" and "broadcast"
+- [ ] **Finish the Core Logic: WebSocket Protocol**: Handle all basic WebSocket functionalities, as specified by the Protocol
 - [ ] **Finish the Core Logic: Tests**: : Unit Tests for all parts of the Core Logic!
 - [ ] **Load Balancing**: Vertical/Internal Load Balancing by adding concurrency (threat pools) 
 - [ ] **Message Rate Limiting**: Prevent clients from spamming a high volume of messages

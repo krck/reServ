@@ -1,11 +1,13 @@
 #ifndef RESERV_SERVER_H
 #define RESERV_SERVER_H
 
+#include "clientConnection.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
 #include "serverConfig.hpp"
 #include "serverConnectionHandler.hpp"
 #include "serverInputHandler.hpp"
+#include "serverOutputHandler.hpp"
 #include "types.hpp"
 
 #include <arpa/inet.h>
@@ -19,13 +21,15 @@
 
 namespace reServ::Server {
 
+using namespace reServ::Client;
 using namespace reServ::Common;
 
 class Server {
   public:
     Server(const ServerConfig& config) :
       _epollfd(-1), _mainSocketfd(-1), _config(config), _serverAddrListFull(nullptr), _messageQueue(), _clientConnections(),
-      _serverConnectionHandler(ServerConnectionHandler(config)), _serverInputHandler(ServerInputHandler(config)), _logger(Logger::instance()) {
+      _serverConnectionHandler(ServerConnectionHandler(config)), _serverOutputHandler(ServerOutputHandler(config)),
+      _serverInputHandler(ServerInputHandler(config)), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(200);
     }
@@ -69,9 +73,8 @@ class Server {
 
                 // Handle OUTPUT (send new messages to the clients)
                 while(!_messageQueue.empty()) {
-                    // ClientMessage* message = _messageQueue.front().get();
-                    // ...
-
+                    ClientMessage* message = _messageQueue.front().get();
+                    handleMessageOutput(message);
                     _messageQueue.pop();
                 }
             }
@@ -214,7 +217,7 @@ class Server {
             if(bytesRecv > 0) {
                 ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuf);
                 _messageQueue.push(std::make_unique<ClientMessage>(message));
-                _logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
+                //_logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
                 return true;
             } else {
                 // In case recv returns 0, the connection should be closed (client has closed)
@@ -231,6 +234,42 @@ class Server {
 
             // Log Info (not Error) since its is a expected result for a connection to be closed somehow
             _logger.log(LogLevel::Info, "Handle data: " + std::string(e.what()));
+            return false;
+        }
+    }
+
+    bool handleMessageOutput(const ClientMessage* const message) {
+        try {
+            // Based on the input message, generate a output message (WebSocket frame)
+            auto outputMessage = _serverOutputHandler.handleOutputData(message);
+
+            if(_config.outputBehavior == OutputBehavior::Echo) {
+                // Echo the message back to the client (if it still exists in the clientConnections)
+                auto clientIter = _clientConnections.find(message->clientSocketfd);
+                if(clientIter != _clientConnections.end()) {
+                    ssize_t bytesWritten = send(message->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
+                    if(bytesWritten < 0) {
+                        // throw std::runtime_error("Failed to send message to client: " + clientIter->second->clientAddrStr);
+                        // ...
+                    }
+                }
+            } else if(_config.outputBehavior == OutputBehavior::Broadcast) {
+                // Broadcast the message to all clients
+                for(auto& client: _clientConnections) {
+                    ssize_t bytesWritten = send(client.second->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
+                    if(bytesWritten < 0) {
+                        // throw std::runtime_error("Failed to send message to client: " + client.second->clientAddrStr);
+                        // ...
+                    }
+                }
+            } else if(_config.outputBehavior == OutputBehavior::Custom) {
+                // Custom output behavior
+                // ...
+            }
+
+            return true;
+        } catch(const std::exception& e) {
+            _logger.log(LogLevel::Error, "Handle output: " + std::string(e.what()));
             return false;
         }
     }
@@ -263,6 +302,7 @@ class Server {
     std::unordered_map<int, std::unique_ptr<ClientConnection>> _clientConnections;
     // Server Utility
     const ServerConnectionHandler _serverConnectionHandler;
+    const ServerOutputHandler _serverOutputHandler;
     const ServerInputHandler _serverInputHandler;
     Logger& _logger;
 };

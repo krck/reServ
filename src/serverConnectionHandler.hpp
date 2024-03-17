@@ -1,5 +1,5 @@
-#ifndef RESERV_SERVER_CONNECTIONHANDLER_H
-#define RESERV_SERVER_CONNECTIONHANDLER_H
+#ifndef RESERV_SERVERCONNECTIONHANDLER_H
+#define RESERV_SERVERCONNECTIONHANDLER_H
 
 #include "enums.hpp"
 #include "logger.hpp"
@@ -20,25 +20,6 @@ namespace reServ::Server {
 
 using namespace reServ::Common;
 
-//
-// ClientConnection
-//
-struct ClientConnection {
-  public:
-    const int clientSocketfd;
-    const sockaddr_storage clientAddr;
-    const std::string clientAddrStr;
-
-  public:
-    ClientConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr) :
-      clientSocketfd(clientSocketfd), clientAddr(clientAddr), clientAddrStr(clientAddrStr) {}
-
-    ~ClientConnection() = default;
-};
-
-//
-// ServerConnectionHandler
-//
 class ServerConnectionHandler {
   private:
     struct BIOFreeAll {
@@ -87,16 +68,20 @@ class ServerConnectionHandler {
         // Remove all whitespace, except line breaks from the request
         req.erase(std::remove_if(req.begin(), req.end(), [](unsigned char x) { return x == '\r' || x == '\t' || x == ' '; }), req.end());
 
-        std::string line, key;
+        std::string line, key, value;
         std::istringstream requestStream(req);
         // Parse the request into a map of headers
         while(std::getline(requestStream, line)) {
             auto separator = line.find(':');
             if(separator != std::string::npos) {
-                key = line.substr(0, separator);
-                // Transform req header key to lowercase (... for easy comparisons and easy hardcoding)
-                std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return std::tolower(c); });
-                headers[key] = line.substr(separator + 1);
+                key   = line.substr(0, separator);
+                value = line.substr(separator + 1);
+                // Transform req header key/value to lowercase (... for easy comparisons and easy hardcoding)
+                std::transform(key.begin(), key.end(), key.begin(), ::tolower);
+                if(key != "sec-websocket-key")
+                    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+
+                headers[key] = value;
             }
         }
 
@@ -109,7 +94,7 @@ class ServerConnectionHandler {
         //     return ValidationCode::VersionNotSupported;
         // }
 
-        if((headers["upgrade"] != "websocket") || (headers["connection"].find("Upgrade") == std::string::npos) ||
+        if((headers["upgrade"] != "websocket") || (headers["connection"].find("upgrade") == std::string::npos) ||
            (headers.find("sec-websocket-key") == headers.end() || headers["sec-websocket-key"].empty())) {
             // Must include "Upgrade: websocket"
             // Must include "Connection: Upgrade"
@@ -122,12 +107,14 @@ class ServerConnectionHandler {
             // ... otherwise: Version Not Supported
             return HandshakeValidationCode::VersionNotSupported;
         }
-        if(headers.find("origin") == headers.end()) {
-            // All browsers send a "Origin" header. This can be validated as well
-            // (but this value can also be NULL, so it's not always reliable)
-            // ... otherwise: Forbidden
-            return HandshakeValidationCode::Forbidden;
-        }
+
+        // All browsers send a "Origin" header. This can be validated as well
+        // (but this value can also be NULL, so it's not always reliable)
+        //if(headers.find("origin") == headers.end()) {
+        // ... otherwise: Forbidden
+        //    return HandshakeValidationCode::Forbidden;
+        //}
+
         return HandshakeValidationCode::OK;
     }
 
@@ -155,8 +142,11 @@ class ServerConnectionHandler {
     //
     // Check if the request contains the necessary headers for a WebSocket upgrade
     //
-    inline bool isWebSocketUpgradeRequest(std::string req) const {
-        return (req.find("Upgrade: websocket") != std::string::npos || req.find("upgrade: websocket") != std::string::npos);
+    inline bool isWebSocketUpgradeRequest(const std::string& req) const {
+        std::string reqLower;
+        reqLower.resize(req.size());
+        std::transform(req.begin(), req.end(), reqLower.begin(), ::tolower);
+        return (reqLower.find("upgrade: websocket") != std::string::npos || reqLower.find("upgrade: websocket") != std::string::npos);
     }
 
     //

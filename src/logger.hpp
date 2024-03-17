@@ -1,6 +1,8 @@
 #ifndef RESERV_LOGGER_H
 #define RESERV_LOGGER_H
 
+#include "enums.hpp"
+
 #include <atomic>
 #include <iostream>
 #include <mutex>
@@ -9,13 +11,6 @@
 #include <thread>
 
 namespace reServ::Common {
-
-// Enum - Log levels
-enum class LogLevel {
-    Info,
-    Warning,
-    Error
-};
 
 // Struct to hold log information
 struct LogEntry {
