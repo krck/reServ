@@ -1,9 +1,9 @@
 #ifndef RESERV_SERVERCONNECTIONHANDLER_H
 #define RESERV_SERVERCONNECTIONHANDLER_H
 
+#include "configService.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
-#include "serverConfig.hpp"
 
 #include <algorithm>
 #include <map>
@@ -28,7 +28,7 @@ class ServerConnectionHandler {
     };
 
   public:
-    ServerConnectionHandler(const ServerConfig& config) : _config(config), _logger(Logger::instance()) {}
+    ServerConnectionHandler() : _config(ConfigService::instance().getServerConfig()), _logger(Logger::instance()) {}
 
     ~ServerConnectionHandler() = default;
 

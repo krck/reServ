@@ -2,9 +2,9 @@
 #define RESERV_SERVERINPUTHANDLER_H
 
 #include "clientMessage.hpp"
+#include "configService.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
-#include "serverConfig.hpp"
 #include "types.hpp"
 
 #include <string>
@@ -17,7 +17,7 @@ using namespace reServ::Common;
 
 class ServerInputHandler {
   public:
-    ServerInputHandler(const ServerConfig& config) : _config(config), _logger(Logger::instance()) {}
+    ServerInputHandler() : _config(ConfigService::instance().getServerConfig()), _logger(Logger::instance()) {}
 
     ~ServerInputHandler() = default;
 

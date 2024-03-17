@@ -1,6 +1,5 @@
 #define CATCH_CONFIG_MAIN
 
-#include "../src/serverConfig.hpp"
 #include "../src/serverInputHandler.hpp"
 
 #include <catch2/catch_all.hpp>
@@ -9,7 +8,7 @@
 using namespace reServ::Server;
 
 TEST_CASE("ServerInputHandler tests", "[ServerInputHandler]") {
-    ServerInputHandler handler { ServerConfig(/* default config */) };
+    ServerInputHandler handler;
 
     SECTION("handleInputData test") {
         std::vector<rsByte> recvBuffer = { /* Add some test data here */ };

@@ -5,7 +5,7 @@
 
 namespace reServ::Common {
 
-enum OutputBehavior : rsUInt8 {
+enum OutputMethod : rsUInt8 {
     Echo      = 0,
     Broadcast = 1,
     Custom    = 2

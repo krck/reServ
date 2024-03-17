@@ -2,9 +2,9 @@
 #define RESERV_SERVER_H
 
 #include "clientConnection.hpp"
+#include "configService.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
-#include "serverConfig.hpp"
 #include "serverConnectionHandler.hpp"
 #include "serverInputHandler.hpp"
 #include "serverOutputHandler.hpp"
@@ -26,10 +26,10 @@ using namespace reServ::Common;
 
 class Server {
   public:
-    Server(const ServerConfig& config) :
-      _epollfd(-1), _mainSocketfd(-1), _config(config), _serverAddrListFull(nullptr), _messageQueue(), _clientConnections(),
-      _serverConnectionHandler(ServerConnectionHandler(config)), _serverOutputHandler(ServerOutputHandler(config)),
-      _serverInputHandler(ServerInputHandler(config)), _logger(Logger::instance()) {
+    Server() :
+      _epollfd(-1), _mainSocketfd(-1), _config(ConfigService::instance().getServerConfig()), _serverAddrListFull(nullptr), _messageQueue(),
+      _clientConnections(), _serverConnectionHandler(ServerConnectionHandler()), _serverOutputHandler(ServerOutputHandler()),
+      _serverInputHandler(ServerInputHandler()), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(200);
     }
@@ -243,7 +243,7 @@ class Server {
             // Based on the input message, generate a output message (WebSocket frame)
             auto outputMessage = _serverOutputHandler.handleOutputData(message);
 
-            if(_config.outputBehavior == OutputBehavior::Echo) {
+            if(_config.outputMethod == OutputMethod::Echo) {
                 // Echo the message back to the client (if it still exists in the clientConnections)
                 auto clientIter = _clientConnections.find(message->clientSocketfd);
                 if(clientIter != _clientConnections.end()) {
@@ -253,7 +253,7 @@ class Server {
                         // ...
                     }
                 }
-            } else if(_config.outputBehavior == OutputBehavior::Broadcast) {
+            } else if(_config.outputMethod == OutputMethod::Broadcast) {
                 // Broadcast the message to all clients
                 for(auto& client: _clientConnections) {
                     ssize_t bytesWritten = send(client.second->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
@@ -262,7 +262,7 @@ class Server {
                         // ...
                     }
                 }
-            } else if(_config.outputBehavior == OutputBehavior::Custom) {
+            } else if(_config.outputMethod == OutputMethod::Custom) {
                 // Custom output behavior
                 // ...
             }

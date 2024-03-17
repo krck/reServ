@@ -3,9 +3,9 @@
 
 #include "clientConnection.hpp"
 #include "clientMessage.hpp"
+#include "configService.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
-#include "serverConfig.hpp"
 #include "types.hpp"
 
 #include <memory>
@@ -24,7 +24,7 @@ using namespace reServ::Common;
 //
 class ServerOutputHandler {
   public:
-    ServerOutputHandler(const ServerConfig& config) : _config(config), _logger(Logger::instance()) {}
+    ServerOutputHandler() : _config(ConfigService::instance().getServerConfig()), _logger(Logger::instance()) {}
 
     ~ServerOutputHandler() = default;
 
