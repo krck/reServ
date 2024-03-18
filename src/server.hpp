@@ -201,8 +201,8 @@ class Server {
     bool handleMessageInput(const ClientConnection* const client) {
         try {
             std::vector<rsByte> recvBuf(_config.recvBufferSize);
-            ssize_t bytesRecv = 0; // Overall bytes received (incoming message)
-            ssize_t tmpRecv   = 0; // "Batch" Bytes received in one recv call
+            size_t bytesRecv = 0; // Overall bytes received (incoming message)
+            size_t tmpRecv   = 0; // "Batch" Bytes received in one recv call
 
             // Receive incoming data, until there is no more data to read on the client socket
             while((tmpRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0)) > 0) {
@@ -215,9 +215,15 @@ class Server {
             }
 
             if(bytesRecv > 0) {
-                ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuf);
-                _messageQueue.push(std::make_unique<ClientMessage>(message));
-                //_logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
+                auto result = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuf);
+                if(std::holds_alternative<ClientMessage>(result)) {
+                    _messageQueue.push(std::make_unique<ClientMessage>(std::get<ClientMessage>(result)));
+                    //_logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
+                } else if(std::holds_alternative<CloseCondition>(result)) {
+                    // Close the connection in case the input handler returned a CloseCondition
+                    // ...
+                }
+
                 return true;
             } else {
                 // In case recv returns 0, the connection should be closed (client has closed)

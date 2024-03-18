@@ -6,7 +6,7 @@ using namespace reServ::Common;
 
 int main(int argc, char* argv[]) {
     // Try to update the server configuration from the command-line arguments
-    const auto& config = ConfigService::instance().updateServerConfigFromArgs(argc, argv);
+    ConfigService::instance().updateServerConfigFromArgs(argc, argv);
 
     // Start and run the server
     Logger::instance().log(LogLevel::Info, "Server config valid. Starting...");
