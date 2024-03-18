@@ -64,17 +64,17 @@ class Server {
                 for(int i = 0; i < numEvents; i++) {
                     if(events[i].data.fd == _mainSocketfd) {
                         // New client connection (if the "write" event is on the main listening socket)
-                        handleNewConnection();
+                        coreConnectionHandler();
                     } else if(_clientConnections.find(events[i].data.fd) != _clientConnections.end()) {
                         // Existing client activity (if the "write" event is on any other (client) socket)
-                        handleMessageInput(_clientConnections[events[i].data.fd].get());
+                        coreInputHandler(_clientConnections[events[i].data.fd].get());
                     }
                 }
 
                 // Handle OUTPUT (send new messages to the clients)
                 while(!_messageQueue.empty()) {
                     ClientMessage* message = _messageQueue.front().get();
-                    handleMessageOutput(message);
+                    coreOutputHandler(message);
                     _messageQueue.pop();
                 }
             }
@@ -114,7 +114,7 @@ class Server {
         // Get the Servers IP address structures, based on the pre-configured "serverHints" (IPv4/IPv6, auto fill, TCP)
         // (All the Servers IP addresses that match the hint config will be stored in a linked-list struct "_serverAddrList")
         if((addrStatus = getaddrinfo(nullptr, std::to_string(_config.port).c_str(), &serverHints, &_serverAddrListFull)) != 0)
-            throw std::runtime_error("Failed to get address infos: " + std::string(gai_strerror(addrStatus)));
+            return -1;
 
         // Loop through all the Server IP address results and bind a new socket to the first possible
         for(serverAddr = _serverAddrListFull; serverAddr != nullptr; serverAddr = serverAddr->ai_next) {
@@ -137,9 +137,8 @@ class Server {
             break;
         }
 
-        if(serverAddr == nullptr || serverSocket < 0) {
-            throw std::runtime_error("Failed to create and bind a socket");
-        }
+        if(serverAddr == nullptr || serverSocket < 0)
+            return -1;
 
         // Set the server socket to non-blocking mode
         // (For edge-triggered epoll, nonblocking sockets MUST be used)
@@ -148,16 +147,20 @@ class Server {
         return serverSocket;
     }
 
-    bool handleNewConnection() {
+    bool coreConnectionHandler() {
         int newClientSocketFd = -1;
-        sockaddr_storage clientAddr {};
-        socklen_t clientAddrSize = sizeof(clientAddr);
         try {
-            // Accept a new connection on the main/listening socket (creates a new client socket and establishes the connection)
-            newClientSocketFd               = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
+            // Accept a new connection on the main/listening socket
+            // (creates a new client socket and establishes the connection)
+            sockaddr_storage clientAddr = {};
+            socklen_t clientAddrSize    = sizeof(clientAddr);
+            newClientSocketFd           = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
+            if(newClientSocketFd < 0) {
+                _logger.log(LogLevel::Error, "Failed to accept new client connection");
+                return false;
+            }
+
             const std::string clientAddrStr = extractIpAddrString(&clientAddr);
-            if(newClientSocketFd < 0)
-                throw std::runtime_error("Failed to accept new client connection: " + clientAddrStr);
 
             // Receive initial data from the client
             std::vector<rsByte> recvBuffer(_config.recvBufferSize);
@@ -188,6 +191,8 @@ class Server {
                 // (control flow via exception since all the cleanup logic is in the catch already)
                 throw std::runtime_error("Client Connection closed from remote: " + clientAddrStr);
             }
+
+            return true;
         } catch(const std::exception& e) {
             _logger.log(LogLevel::Error, "ConnectionHandler: " + std::string(e.what()));
             if(newClientSocketFd >= 0) {
@@ -198,7 +203,7 @@ class Server {
         }
     }
 
-    bool handleMessageInput(const ClientConnection* const client) {
+    bool coreInputHandler(const ClientConnection* const client) {
         try {
             std::vector<rsByte> recvBuf(_config.recvBufferSize);
             size_t bytesRecv = 0; // Overall bytes received (incoming message)
@@ -244,7 +249,7 @@ class Server {
         }
     }
 
-    bool handleMessageOutput(const ClientMessage* const message) {
+    bool coreOutputHandler(const ClientMessage* const message) {
         try {
             // Based on the input message, generate a output message (WebSocket frame)
             auto outputMessage = _serverOutputHandler.handleOutputData(message);

@@ -59,7 +59,7 @@ class ServerInputHandler {
             // The server MUST close the connection upon receiving a frame with the mask bit set to 0
             // (The client MUST always set the mask bit to 1, as defined in the RFC)
             _logger.log(LogLevel::Error, "Server received a frame with the mask bit set to 0. Closing the connection.");
-            return CloseCondition { clientSocketfd, WsCloseCode::PROTOCOL_ERROR };
+            return CloseCondition { clientSocketfd, true, WsCloseCode::PROTOCOL_ERROR };
         }
 
         // Use the original payload length to determine how many of the bytes to use:

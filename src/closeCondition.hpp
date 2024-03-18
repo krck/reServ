@@ -7,11 +7,13 @@ namespace reServ::Common {
 
 struct CloseCondition {
   public:
-    int clientSocketfd;
-    WsCloseCode closeCode;
+    const int clientSocketfd;
+    const bool wsConnectionEstablished;
+    const WsCloseCode closeCode;
 
   public:
-    CloseCondition(int clientSocketfd, WsCloseCode closeCode) : clientSocketfd(clientSocketfd), closeCode(closeCode) {}
+    CloseCondition(int clientSocketfd, bool wsConnectionEstablished, WsCloseCode closeCode) :
+      clientSocketfd(clientSocketfd), wsConnectionEstablished(wsConnectionEstablished), closeCode(closeCode) {}
 
     ~CloseCondition() = default;
 };
