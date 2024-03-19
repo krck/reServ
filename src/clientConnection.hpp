@@ -8,11 +8,17 @@
 
 namespace reServ::Client {
 
+using namespace reServ::Common;
+
 struct ClientConnection {
   public:
+    // Core Connection data
     const int clientSocketfd;
     const sockaddr_storage clientAddr;
     const std::string clientAddrStr;
+    // Variable Connection data
+    rsUInt64 lastPingTimestamp = 0;
+    bool awaitingPong          = false;
 
   public:
     ClientConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr) :

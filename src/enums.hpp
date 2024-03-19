@@ -60,6 +60,7 @@ enum WsCloseCode : rsUInt16 {
 };
 
 enum class LogLevel {
+    Debug,
     Info,
     Warning,
     Error

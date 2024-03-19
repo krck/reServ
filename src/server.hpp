@@ -69,6 +69,7 @@ class Server {
                         coreConnectionCreateHandler();
                     } else if(_clientConnections.find(events[i].data.fd) != _clientConnections.end()) {
                         // Existing client activity (if the "write" event is on any other (client) socket)
+                        _logger.log(LogLevel::Debug, "Client activity on socket: " + std::to_string(events[i].data.fd));
                         coreInputHandler(_clientConnections[events[i].data.fd].get());
                     }
                 }
@@ -177,6 +178,7 @@ class Server {
             const std::string request(recvBuffer.begin(), recvBuffer.end());
             if(bytesRead > 0) {
                 auto response = _serverConnectionHandler.handleHandshakeRequest(request);
+                std::vector<rsByte> respBytes(response.begin(), response.end());
 
                 // Set the client socket to non-blocking mode and add it to the epoll instance
                 fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
@@ -186,7 +188,7 @@ class Server {
                 epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event);
 
                 // Send the handshake response to the client and save the new client connection
-                ssize_t bytesWritten = send(newClientSocketFd, response.c_str(), response.length(), 0);
+                ssize_t bytesWritten = sendToSocket(newClientSocketFd, respBytes);
                 if(bytesWritten >= 0) {
                     ClientConnection newConnection { newClientSocketFd, clientAddr, clientAddrStr };
                     _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
@@ -226,13 +228,46 @@ class Server {
                     recvBuf.resize(recvBuf.size() * 2);
             }
 
+            // while(true) {
+            //     tmpRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0);
+
+            //     // Handle recv errors or connection closure
+            //     if(tmpRecv == 0) {
+            //         _clientCloseQueue.push({ client->clientSocketfd, true, "NORMAL_CLOSURE", WsCloseCode::NORMAL_CLOSURE });
+            //         return false;
+            //     } else if(tmpRecv < 0) {
+            //         _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
+            //         return false;
+            //     }
+
+            //     bytesRecv += tmpRecv;
+
+            //     // Check if we have a complete WebSocket frame
+            //     if(_serverInputHandler.parseFrameLength(recvBuf)) {
+            //         break;
+            //     }
+
+            //     // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
+            //     if(bytesRecv == (rsInt64)recvBuf.size()) {
+            //         // Check for buffer overflow (if buffer is too large, close the connection)
+            //         if(recvBuf.size() * 2 > (_config.maxPayloadLength + _config.frameHeaderSize)) {
+            //             _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
+            //             return false;
+            //         }
+
+            //         recvBuf.resize(recvBuf.size() * 2);
+            //     }
+            // }
+
             if(bytesRecv > 0) {
+                _logger.log(LogLevel::Debug, "Received message: " + std::to_string(bytesRecv));
+
                 auto result = _serverInputHandler.parseWsDataFrame(client->clientSocketfd, recvBuf);
                 if(std::holds_alternative<ClientMessage>(result)) {
                     _clientMessageQueue.push(std::make_unique<ClientMessage>(std::get<ClientMessage>(result)));
                     //_logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
                     return true;
-                } else if(std::holds_alternative<CloseCondition>(result)) {
+                } else {
                     // Close the connection in case the input handler returned a CloseCondition
                     _clientCloseQueue.push(std::get<CloseCondition>(result));
                     return false;
@@ -258,15 +293,31 @@ class Server {
 
     bool coreOutputHandler(const ClientMessage* const message) {
         try {
+<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
+<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
+=======
+            // The client connection was closed in the meantime, so the message should not be sent
+            if(_clientConnections.find(message->clientSocketfd) == _clientConnections.end() || message == nullptr) {
+                return false;
+            }
+
+>>>>>>> fix recv (split frames)
+=======
+            // The client connection was closed in the meantime, so the message should not be sent
+            if(_clientConnections.find(message->clientSocketfd) == _clientConnections.end() || message == nullptr || message->payloadData.empty()) {
+                return false;
+            }
+
+>>>>>>> ping pong #1
             // Based on the input message, generate a output message (WebSocket frame)
-            auto result = _serverOutputHandler.generateWsDataFrame(message);
+            auto result = _serverOutputHandler.generateWsDataFrame(_clientConnections[message->clientSocketfd].get(), message);
             if(std::holds_alternative<std::vector<rsByte>>(result)) {
                 const std::vector<rsByte>& outputMessage = std::get<std::vector<rsByte>>(result);
                 if(_config.outputMethod == OutputMethod::Echo) {
                     // Echo the message back to the client (if it still exists in the clientConnections)
                     auto clientIter = _clientConnections.find(message->clientSocketfd);
                     if(clientIter != _clientConnections.end()) {
-                        ssize_t bytesWritten = send(message->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
+                        ssize_t bytesWritten = sendToSocket(message->clientSocketfd, outputMessage);
                         if(bytesWritten < 0) {
                             // throw std::runtime_error("Failed to send message to client: " + clientIter->second->clientAddrStr);
                             // ...
@@ -275,7 +326,7 @@ class Server {
                 } else if(_config.outputMethod == OutputMethod::Broadcast) {
                     // Broadcast the message to all clients
                     for(auto& client: _clientConnections) {
-                        ssize_t bytesWritten = send(client.second->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
+                        ssize_t bytesWritten = sendToSocket(client.second->clientSocketfd, outputMessage);
                         if(bytesWritten < 0) {
                             // throw std::runtime_error("Failed to send message to client: " + client.second->clientAddrStr);
                             // ...
@@ -306,7 +357,16 @@ class Server {
             if(condition.wsConnectionEstablished) {
                 // Send a WebSocket close frame to the client
                 std::vector<rsByte> closeFrame = _serverOutputHandler.generateWsCloseFrame(static_cast<rsUInt16>(condition.closeCode));
+<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
+<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
                 rsInt64 bytesWritten           = send(condition.clientSocketfd, &closeFrame[0], closeFrame.size(), 0);
+=======
+                rsInt64 bytesWritten           = sendToSocket(condition.clientSocketfd, closeFrame);
+
+>>>>>>> fix recv (split frames)
+=======
+                rsInt64 bytesWritten           = sendToSocket(condition.clientSocketfd, closeFrame);
+>>>>>>> ping pong #1
                 if(bytesWritten < 0) {
                     _logger.log(LogLevel::Error, "Failed to send close frame to client: ");
                 }
@@ -328,6 +388,36 @@ class Server {
         } catch(const std::exception& e) {
             _logger.log(LogLevel::Error, "Handle close: " + std::string(e.what()));
             return false;
+        }
+    }
+
+  private:
+    //
+    // Send Wrapper
+    //
+    rsInt64 sendToSocket(int sockfd, const std::vector<rsByte>& data, int flags = 0) noexcept {
+        // Check for any socket errors
+        int optval;
+        socklen_t optlen = sizeof(optval);
+        if(getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &optval, &optlen) != 0)
+            return -1;
+
+        if(optval == 0) {
+            // If there are no errors, send the close frame
+            rsInt64 bytesSent = send(sockfd, &data[0], data.size(), flags);
+            if(bytesSent == -1 && errno == EPIPE) {
+                // Handle broken pipe error
+                _logger.log(LogLevel::Error, "Broken pipe error: " + std::string(strerror(errno)));
+                return -1;
+            } else if(bytesSent == -1) {
+                // Handle other errors
+                _logger.log(LogLevel::Error, "Socket error: " + std::string(strerror(errno)));
+                return -1;
+            }
+            return bytesSent;
+        } else {
+            _logger.log(LogLevel::Error, "Socket error: " + std::string(strerror(optval)));
+            return -1;
         }
     }
 

@@ -31,8 +31,10 @@ class Logger {
     }
 
     void log(LogLevel level, const std::string& message) {
-        std::lock_guard<std::mutex> lock(queueMutex);
-        logQueue.push({ level, message });
+        // std::lock_guard<std::mutex> lock(queueMutex);
+        // logQueue.push({ level, message });
+
+        printLogEntry({ level, message });
     }
 
     ~Logger() {
@@ -84,12 +86,13 @@ class Logger {
         // Print log entry to console
         std::string levelString;
         switch(entry.level) {
+            case LogLevel::Debug: levelString = "DEBUG"; break;
             case LogLevel::Info: levelString = "INFO"; break;
             case LogLevel::Warning: levelString = "WARNING"; break;
             case LogLevel::Error: levelString = "ERROR"; break;
             default: break;
         }
-        std::lock_guard<std::mutex> lock(printMutex);
+        //std::lock_guard<std::mutex> lock(printMutex);
         std::cout << "[" << timeString << "][" << levelString << "]: " << entry.message << std::endl;
     }
 

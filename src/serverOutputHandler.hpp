@@ -29,13 +29,12 @@ class ServerOutputHandler {
     ~ServerOutputHandler() = default;
 
   public:
-    std::variant<std::vector<rsByte>, CloseCondition> generateWsDataFrame(const ClientMessage* const message) const {
+    std::variant<std::vector<rsByte>, CloseCondition> generateWsDataFrame(const ClientConnection* const client,
+                                                                          const ClientMessage* const message) const {
         // Add some logic for "fragmented" messages here
         // ...
 
-        if(message->opc == WsFrame_OPC::CLOSE) {
-            return CloseCondition { message->clientSocketfd, true, "Client requested close", WsCloseCode::NORMAL_CLOSURE };
-        } else {
+        if(message->opc == WsFrame_OPC::TEXT || message->opc == WsFrame_OPC::BINARY) {
             std::vector<rsByte> frame;
             frame.reserve(message->payloadData.size() + _config.frameHeaderSize);
 
@@ -72,6 +71,13 @@ class ServerOutputHandler {
 
             frame.insert(frame.end(), message->payloadData.begin(), message->payloadData.end());
             return frame;
+        } else if(message->opc == WsFrame_OPC::PING) {
+            // Create a PONG frame, that mirrors the payload of the PING frame (if there is any)
+            std::vector<rsByte> pongFrame { 0x8A, 0x00 };
+            pongFrame.insert(pongFrame.end(), message->payloadData.begin(), message->payloadData.end());
+            return pongFrame;
+        } else /* if(message->opc == WsFrame_OPC::CLOSE) */ {
+            return CloseCondition { message->clientSocketfd, true, "Client requested close", WsCloseCode::NORMAL_CLOSURE };
         }
     }
 
