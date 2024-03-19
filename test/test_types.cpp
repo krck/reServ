@@ -14,6 +14,11 @@ TEST_CASE("rs types size", "[rs_types]") {
     REQUIRE(sizeof(rsUInt16) == 2);
     REQUIRE(sizeof(rsUInt32) == 4);
     REQUIRE(sizeof(rsUInt64) == 8);
+    REQUIRE(sizeof(rsInt8) == 1);
+    REQUIRE(sizeof(rsInt16) == 2);
+    REQUIRE(sizeof(rsInt32) == 4);
+    REQUIRE(sizeof(rsInt64) == 8);
+
     // U, UL, ULL suffixes are used in the BIT-MACROS
     REQUIRE(sizeof(1U) == 4);
     REQUIRE(sizeof(1UL) == 8);

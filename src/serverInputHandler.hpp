@@ -49,7 +49,7 @@ class ServerInputHandler {
         // |M| Payload len |
         const bool maskBitSet     = static_cast<bool>(messageBytes[1] & 0x80);     // 0b10000000
         rsUInt64 tmpPayloadLength = static_cast<rsUInt64>(messageBytes[1] & 0x7F); // 0b01111111
-        if(maskBitSet) {
+        if(!maskBitSet) {
             // The server MUST close the connection upon receiving a frame with the mask bit set to 0
             // (The client MUST always set the mask bit to 1, as defined in the RFC)
             return CloseCondition { clientSocketfd, true, "Server received a frame with the mask bit set to 0", WsCloseCode::PROTOCOL_ERROR };

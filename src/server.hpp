@@ -4,6 +4,7 @@
 #include "clientConnection.hpp"
 #include "configService.hpp"
 #include "enums.hpp"
+#include "helpers.hpp"
 #include "logger.hpp"
 #include "serverConnectionHandler.hpp"
 #include "serverInputHandler.hpp"
@@ -214,14 +215,14 @@ class Server {
         try {
             // Receive incoming data, until there is no more data to read on the client socket
             std::vector<rsByte> recvBuf(_config.recvBufferSize);
-            size_t bytesRecv = 0; // Overall bytes received (incoming message)
-            size_t tmpRecv   = 0; // "Batch" Bytes received in one recv call
+            rsInt64 bytesRecv = 0; // Overall bytes received (incoming message)
+            rsInt64 tmpRecv   = 0; // "Batch" Bytes received in one recv call
             while((tmpRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0)) > 0) {
                 bytesRecv += tmpRecv;
 
                 // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
                 // TODO: This could be easily abused by a client to allocate a lot of memory on the server!!!!
-                if(bytesRecv == recvBuf.size())
+                if(bytesRecv == (rsInt64)recvBuf.size())
                     recvBuf.resize(recvBuf.size() * 2);
             }
 
@@ -240,12 +241,11 @@ class Server {
                 // In case recv returns 0, the connection should be closed (client has closed)
                 _clientCloseQueue.push({ client->clientSocketfd, true, "NORMAL_CLOSURE", WsCloseCode::NORMAL_CLOSURE });
                 return true;
-            } else if(bytesRecv < 0) {
+            } else {
                 // In case recv return -1, there was an error and the connection should be closed
                 _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
                 return false;
             }
-            return false;
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
             _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
@@ -285,14 +285,12 @@ class Server {
                     // Custom output behavior
                     // ...
                 }
-
                 return true;
-            } else if(std::holds_alternative<CloseCondition>(result)) {
+            } else {
                 // Close the connection in case the output handler returned a CloseCondition
                 _clientCloseQueue.push(std::get<CloseCondition>(result));
                 return false;
             }
-            return false;
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
             _clientCloseQueue.push({ message->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
@@ -308,7 +306,7 @@ class Server {
             if(condition.wsConnectionEstablished) {
                 // Send a WebSocket close frame to the client
                 std::vector<rsByte> closeFrame = _serverOutputHandler.generateWsCloseFrame(static_cast<rsUInt16>(condition.closeCode));
-                size_t bytesWritten            = send(condition.clientSocketfd, &closeFrame[0], closeFrame.size(), 0);
+                rsInt64 bytesWritten           = send(condition.clientSocketfd, &closeFrame[0], closeFrame.size(), 0);
                 if(bytesWritten < 0) {
                     _logger.log(LogLevel::Error, "Failed to send close frame to client: ");
                 }
@@ -330,23 +328,6 @@ class Server {
         } catch(const std::exception& e) {
             _logger.log(LogLevel::Error, "Handle close: " + std::string(e.what()));
             return false;
-        }
-    }
-
-    //
-    // Return a IPv4/IPv6 address as a (readable) string
-    //
-    std::string extractIpAddrString(sockaddr_storage* addr) const {
-        if(addr->ss_family == AF_INET) {
-            // IP v4 Address
-            struct sockaddr_in* addr_v4 = (struct sockaddr_in*)addr;
-            return std::string(inet_ntoa(addr_v4->sin_addr));
-        } else {
-            // IP v6 Address
-            char a[INET6_ADDRSTRLEN] { '\0' };
-            struct sockaddr_in6* addr_v6 = (struct sockaddr_in6*)addr;
-            inet_ntop(AF_INET6, &(addr_v6->sin6_addr), a, INET6_ADDRSTRLEN);
-            return std::string(a);
         }
     }
 
