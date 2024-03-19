@@ -26,7 +26,7 @@ enum WsFrame_FIN : rsByte {
 
 enum WsFrame_RSV : rsByte {
     // RSV1, RSV2, RSV3 are reserved for further use
-    NONE = 0x00
+    RSV_NONE = 0x00
 };
 
 enum WsFrame_OPC : rsByte {
@@ -40,7 +40,8 @@ enum WsFrame_OPC : rsByte {
     PONG         = 0xA
 };
 
-enum class WsCloseCode {
+enum WsCloseCode : rsUInt16 {
+    CL_NONE                    = 0,
     NORMAL_CLOSURE             = 1000,
     GOING_AWAY                 = 1001,
     PROTOCOL_ERROR             = 1002,

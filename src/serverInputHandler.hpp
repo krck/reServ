@@ -24,7 +24,7 @@ class ServerInputHandler {
     ~ServerInputHandler() = default;
 
   public:
-    std::variant<ClientMessage, CloseCondition> handleInputData(int clientSocketfd, const std::vector<rsByte>& recvBuffer) const {
+    std::variant<ClientMessage, CloseCondition> parseWsDataFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
         // Add some logic for "fragmented" messages here
         // WebSocket: Message only ends, when the FIN bit is set (one client can send multiple messages in one packet)
         // ...
@@ -32,12 +32,6 @@ class ServerInputHandler {
         // Only if the FIN bit is set, the message is returned to the server, where it is then added to the message queue
         // ...
 
-        auto message = parseWebSocketFrame(clientSocketfd, recvBuffer);
-        return message;
-    }
-
-  private:
-    std::variant<ClientMessage, CloseCondition> parseWebSocketFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
         // ----------------------------------------------------------------------------------------------------------------
         // ---------------------------------------- Parse WebSocket Protocol Data -----------------------------------------
         // ------------------------------- https://www.rfc-editor.org/rfc/rfc6455#section-5 -------------------------------
@@ -58,8 +52,7 @@ class ServerInputHandler {
         if(maskBitSet) {
             // The server MUST close the connection upon receiving a frame with the mask bit set to 0
             // (The client MUST always set the mask bit to 1, as defined in the RFC)
-            _logger.log(LogLevel::Error, "Server received a frame with the mask bit set to 0. Closing the connection.");
-            return CloseCondition { clientSocketfd, true, WsCloseCode::PROTOCOL_ERROR };
+            return CloseCondition { clientSocketfd, true, "Server received a frame with the mask bit set to 0", WsCloseCode::PROTOCOL_ERROR };
         }
 
         // Use the original payload length to determine how many of the bytes to use:
