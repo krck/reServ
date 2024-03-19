@@ -26,7 +26,7 @@ enum WsFrame_FIN : rsByte {
 
 enum WsFrame_RSV : rsByte {
     // RSV1, RSV2, RSV3 are reserved for further use
-    NO_DATA = 0x00
+    RSV_NONE = 0x00
 };
 
 enum WsFrame_OPC : rsByte {
@@ -38,6 +38,25 @@ enum WsFrame_OPC : rsByte {
     CLOSE        = 0x8,
     PING         = 0x9,
     PONG         = 0xA
+};
+
+enum WsCloseCode : rsUInt16 {
+    CL_NONE                    = 0,
+    NORMAL_CLOSURE             = 1000,
+    GOING_AWAY                 = 1001,
+    PROTOCOL_ERROR             = 1002,
+    UNSUPPORTED_DATA           = 1003,
+    NO_STATUS_RCVD             = 1005,
+    ABNORMAL_CLOSURE           = 1006,
+    INVALID_FRAME_PAYLOAD_DATA = 1007,
+    POLICY_VIOLATION           = 1008,
+    MESSAGE_TOO_BIG            = 1009,
+    MANDATORY_EXT              = 1010,
+    INTERNAL_SERVER_ERROR      = 1011,
+    SERVICE_RESTART            = 1012,
+    TRY_AGAIN_LATER            = 1013,
+    BAD_GATEWAY                = 1014,
+    TLS_HANDSHAKE              = 1015
 };
 
 enum class LogLevel {

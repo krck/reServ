@@ -11,6 +11,11 @@ using rsUInt16 = std::uint16_t;
 using rsUInt32 = std::uint32_t;
 using rsUInt64 = std::uint64_t;
 
+using rsInt8  = std::int8_t;
+using rsInt16 = std::int16_t;
+using rsInt32 = std::int32_t;
+using rsInt64 = std::int64_t;
+
 // -------------------------------------------------------------
 // ---------------------- BIT READ MACROS ----------------------
 // -------------------------------------------------------------

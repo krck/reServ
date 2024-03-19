@@ -2,12 +2,14 @@
 #define RESERV_SERVERINPUTHANDLER_H
 
 #include "clientMessage.hpp"
+#include "closeCondition.hpp"
 #include "configService.hpp"
 #include "enums.hpp"
 #include "logger.hpp"
 #include "types.hpp"
 
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace reServ::Server {
@@ -22,7 +24,7 @@ class ServerInputHandler {
     ~ServerInputHandler() = default;
 
   public:
-    ClientMessage handleInputData(int clientSocketfd, const std::vector<rsByte>& recvBuffer) const {
+    std::variant<ClientMessage, CloseCondition> parseWsDataFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
         // Add some logic for "fragmented" messages here
         // WebSocket: Message only ends, when the FIN bit is set (one client can send multiple messages in one packet)
         // ...
@@ -30,12 +32,6 @@ class ServerInputHandler {
         // Only if the FIN bit is set, the message is returned to the server, where it is then added to the message queue
         // ...
 
-        auto message = parseWebSocketFrame(clientSocketfd, recvBuffer);
-        return message;
-    }
-
-  private:
-    ClientMessage parseWebSocketFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
         // ----------------------------------------------------------------------------------------------------------------
         // ---------------------------------------- Parse WebSocket Protocol Data -----------------------------------------
         // ------------------------------- https://www.rfc-editor.org/rfc/rfc6455#section-5 -------------------------------
@@ -53,6 +49,11 @@ class ServerInputHandler {
         // |M| Payload len |
         const bool maskBitSet     = static_cast<bool>(messageBytes[1] & 0x80);     // 0b10000000
         rsUInt64 tmpPayloadLength = static_cast<rsUInt64>(messageBytes[1] & 0x7F); // 0b01111111
+        if(!maskBitSet) {
+            // The server MUST close the connection upon receiving a frame with the mask bit set to 0
+            // (The client MUST always set the mask bit to 1, as defined in the RFC)
+            return CloseCondition { clientSocketfd, true, "Server received a frame with the mask bit set to 0", WsCloseCode::PROTOCOL_ERROR };
+        }
 
         // Use the original payload length to determine how many of the bytes to use:
         // - If the value is between 0-125, the 7 bits in the second byte represent the actual payload length
@@ -83,12 +84,10 @@ class ServerInputHandler {
         // The masking key is a 32-bit value, spanning the next 4 bytes after the payload length
         // (In theory only done if the mask bit is set, but the Client MUST always mask ALL frames, as defined in the RFC)
         rsUInt32 maskingKey = 0;
-        if(maskBitSet) {
-            maskingKey = (maskingKey << 8) | messageBytes[frameIdx++];
-            maskingKey = (maskingKey << 8) | messageBytes[frameIdx++];
-            maskingKey = (maskingKey << 8) | messageBytes[frameIdx++];
-            maskingKey = (maskingKey << 8) | messageBytes[frameIdx++];
-        }
+        maskingKey          = (maskingKey << 8) | messageBytes[frameIdx++];
+        maskingKey          = (maskingKey << 8) | messageBytes[frameIdx++];
+        maskingKey          = (maskingKey << 8) | messageBytes[frameIdx++];
+        maskingKey          = (maskingKey << 8) | messageBytes[frameIdx++];
 
         // Read the Payload Data
         // (In theory divided into "Extension Data" and "Application Data", but extention must be specifically negotiated - Not yet implemented)
@@ -99,7 +98,7 @@ class ServerInputHandler {
             payloadData[i] = (messageBytes[frameIdx++] ^ ((maskingKey >> (8 * (3 - i % 4))) & 0xFF));
         }
 
-        return { clientSocketfd, fin, rsv, opc, payloadData };
+        return ClientMessage { clientSocketfd, fin, rsv, opc, payloadData };
     }
 
   private:

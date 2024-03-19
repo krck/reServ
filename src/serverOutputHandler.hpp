@@ -29,57 +29,50 @@ class ServerOutputHandler {
     ~ServerOutputHandler() = default;
 
   public:
-    std::vector<rsByte> handleOutputData(const ClientMessage* const message) const {
+    std::variant<std::vector<rsByte>, CloseCondition> generateWsDataFrame(const ClientMessage* const message) const {
         // Add some logic for "fragmented" messages here
         // ...
 
         if(message->opc == WsFrame_OPC::CLOSE) {
-            // Close the connection
-            // (for now, hardcoded to 1000: Normal Closure)
-            return generateWsCloseFrame(1000);
-        }
-
-        return generateWsDataFrame(message->fin, message->opc, message->payloadData);
-    }
-
-  private:
-    std::vector<rsByte> generateWsDataFrame(WsFrame_FIN fin, WsFrame_OPC opcode, const std::vector<rsByte>& payload) const {
-        std::vector<rsByte> frame;
-        frame.reserve(payload.size() + _config.frameHeaderSize);
-
-        // The first BYTE contains the FIN bit, RSV1, RSV2, RSV3, and the OP-Code
-        // |7|6|5|4|3|2|1|0|
-        // |F|R|R|R| opcode|
-        // (Mask the OPC with 0x0F to set only the last 4 bits and OR that with fin which sets the first bit)
-        rsByte firstByte = ((fin) | (opcode & 0x0F));
-        frame.push_back(firstByte);
-
-        // Second byte: Mask and payload length
-        const size_t payloadLength = payload.size();
-        rsByte secondByte          = 0x00;
-        if(payloadLength <= 125) {
-            secondByte |= payloadLength;
-            frame.push_back(secondByte);
-        } else if(payloadLength <= 65535) {
-            secondByte |= 126;
-            frame.push_back(secondByte);
-            frame.push_back((payloadLength >> 8) & 0xFF);
-            frame.push_back(payloadLength & 0xFF);
+            return CloseCondition { message->clientSocketfd, true, "Client requested close", WsCloseCode::NORMAL_CLOSURE };
         } else {
-            secondByte |= 127;
-            frame.push_back(secondByte);
-            frame.push_back((payloadLength >> 56) & 0xFF);
-            frame.push_back((payloadLength >> 48) & 0xFF);
-            frame.push_back((payloadLength >> 40) & 0xFF);
-            frame.push_back((payloadLength >> 32) & 0xFF);
-            frame.push_back((payloadLength >> 24) & 0xFF);
-            frame.push_back((payloadLength >> 16) & 0xFF);
-            frame.push_back((payloadLength >> 8) & 0xFF);
-            frame.push_back(payloadLength & 0xFF);
-        }
+            std::vector<rsByte> frame;
+            frame.reserve(message->payloadData.size() + _config.frameHeaderSize);
 
-        frame.insert(frame.end(), payload.begin(), payload.end());
-        return frame;
+            // The first BYTE contains the FIN bit, RSV1, RSV2, RSV3, and the OP-Code
+            // |7|6|5|4|3|2|1|0|
+            // |F|R|R|R| opcode|
+            // (Mask the OPC with 0x0F to set only the last 4 bits and OR that with fin which sets the first bit)
+            rsByte firstByte = ((message->fin) | (message->opc & 0x0F));
+            frame.push_back(firstByte);
+
+            // Second byte: Mask and payload length
+            const size_t payloadLength = message->payloadData.size();
+            rsByte secondByte          = 0x00;
+            if(payloadLength <= 125) {
+                secondByte |= payloadLength;
+                frame.push_back(secondByte);
+            } else if(payloadLength <= 65535) {
+                secondByte |= 126;
+                frame.push_back(secondByte);
+                frame.push_back((payloadLength >> 8) & 0xFF);
+                frame.push_back(payloadLength & 0xFF);
+            } else {
+                secondByte |= 127;
+                frame.push_back(secondByte);
+                frame.push_back((payloadLength >> 56) & 0xFF);
+                frame.push_back((payloadLength >> 48) & 0xFF);
+                frame.push_back((payloadLength >> 40) & 0xFF);
+                frame.push_back((payloadLength >> 32) & 0xFF);
+                frame.push_back((payloadLength >> 24) & 0xFF);
+                frame.push_back((payloadLength >> 16) & 0xFF);
+                frame.push_back((payloadLength >> 8) & 0xFF);
+                frame.push_back(payloadLength & 0xFF);
+            }
+
+            frame.insert(frame.end(), message->payloadData.begin(), message->payloadData.end());
+            return frame;
+        }
     }
 
     std::vector<rsByte> generateWsCloseFrame(rsUInt16 statusCode) const {

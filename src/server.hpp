@@ -4,6 +4,7 @@
 #include "clientConnection.hpp"
 #include "configService.hpp"
 #include "enums.hpp"
+#include "helpers.hpp"
 #include "logger.hpp"
 #include "serverConnectionHandler.hpp"
 #include "serverInputHandler.hpp"
@@ -27,8 +28,8 @@ using namespace reServ::Common;
 class Server {
   public:
     Server() :
-      _epollfd(-1), _mainSocketfd(-1), _config(ConfigService::instance().getServerConfig()), _serverAddrListFull(nullptr), _messageQueue(),
-      _clientConnections(), _serverConnectionHandler(ServerConnectionHandler()), _serverOutputHandler(ServerOutputHandler()),
+      _epollfd(-1), _mainSocketfd(-1), _config(ConfigService::instance().getServerConfig()), _serverAddrListFull(nullptr), _clientCloseQueue(),
+      _clientMessageQueue(), _clientConnections(), _serverConnectionHandler(ServerConnectionHandler()), _serverOutputHandler(ServerOutputHandler()),
       _serverInputHandler(ServerInputHandler()), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(200);
@@ -59,23 +60,31 @@ class Server {
             // -------------------------------------------------------------------------------------
             _logger.log(LogLevel::Info, "Server running: Main Socket listening on port " + std::to_string(_config.port));
             while(true) {
+                // 1. Handle INPUT (new client connections and existing client activity)
                 std::vector<epoll_event> events(_config.maxEpollEvents);
                 int numEvents = epoll_wait(_epollfd, &events[0], _config.maxEpollEvents, -1);
                 for(int i = 0; i < numEvents; i++) {
                     if(events[i].data.fd == _mainSocketfd) {
                         // New client connection (if the "write" event is on the main listening socket)
-                        handleNewConnection();
+                        coreConnectionCreateHandler();
                     } else if(_clientConnections.find(events[i].data.fd) != _clientConnections.end()) {
                         // Existing client activity (if the "write" event is on any other (client) socket)
-                        handleMessageInput(_clientConnections[events[i].data.fd].get());
+                        coreInputHandler(_clientConnections[events[i].data.fd].get());
                     }
                 }
 
-                // Handle OUTPUT (send new messages to the clients)
-                while(!_messageQueue.empty()) {
-                    ClientMessage* message = _messageQueue.front().get();
-                    handleMessageOutput(message);
-                    _messageQueue.pop();
+                // 2. Handle OUTPUT (send new messages to the clients)
+                while(!_clientMessageQueue.empty()) {
+                    ClientMessage* message = _clientMessageQueue.front().get();
+                    coreOutputHandler(message);
+                    _clientMessageQueue.pop();
+                }
+
+                // 3. Handle CLOSE CONDITIONS (connections that encountered an error, timeout, etc.)
+                while(!_clientCloseQueue.empty()) {
+                    const CloseCondition& condition = _clientCloseQueue.front();
+                    coreConnectionCloseHandler(condition);
+                    _clientCloseQueue.pop();
                 }
             }
             return true;
@@ -114,7 +123,7 @@ class Server {
         // Get the Servers IP address structures, based on the pre-configured "serverHints" (IPv4/IPv6, auto fill, TCP)
         // (All the Servers IP addresses that match the hint config will be stored in a linked-list struct "_serverAddrList")
         if((addrStatus = getaddrinfo(nullptr, std::to_string(_config.port).c_str(), &serverHints, &_serverAddrListFull)) != 0)
-            throw std::runtime_error("Failed to get address infos: " + std::string(gai_strerror(addrStatus)));
+            return -1;
 
         // Loop through all the Server IP address results and bind a new socket to the first possible
         for(serverAddr = _serverAddrListFull; serverAddr != nullptr; serverAddr = serverAddr->ai_next) {
@@ -137,9 +146,8 @@ class Server {
             break;
         }
 
-        if(serverAddr == nullptr || serverSocket < 0) {
-            throw std::runtime_error("Failed to create and bind a socket");
-        }
+        if(serverAddr == nullptr || serverSocket < 0)
+            return -1;
 
         // Set the server socket to non-blocking mode
         // (For edge-triggered epoll, nonblocking sockets MUST be used)
@@ -148,16 +156,20 @@ class Server {
         return serverSocket;
     }
 
-    bool handleNewConnection() {
+    bool coreConnectionCreateHandler() {
         int newClientSocketFd = -1;
-        sockaddr_storage clientAddr {};
-        socklen_t clientAddrSize = sizeof(clientAddr);
         try {
-            // Accept a new connection on the main/listening socket (creates a new client socket and establishes the connection)
-            newClientSocketFd               = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
-            const std::string clientAddrStr = extractIpAddrString(&clientAddr);
-            if(newClientSocketFd < 0)
-                throw std::runtime_error("Failed to accept new client connection: " + clientAddrStr);
+            // Accept a new connection on the main/listening socket
+            // (creates a new client socket and establishes the connection)
+            sockaddr_storage clientAddr = {};
+            socklen_t clientAddrSize    = sizeof(clientAddr);
+            newClientSocketFd           = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
+            if(newClientSocketFd < 0) {
+                _logger.log(LogLevel::Error, "Failed to accept new client connection");
+                return false;
+            }
+
+            auto clientAddrStr = extractIpAddrString(&clientAddr);
 
             // Receive initial data from the client
             std::vector<rsByte> recvBuffer(_config.recvBufferSize);
@@ -176,118 +188,146 @@ class Server {
                 // Send the handshake response to the client and save the new client connection
                 ssize_t bytesWritten = send(newClientSocketFd, response.c_str(), response.length(), 0);
                 if(bytesWritten >= 0) {
-                    _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
                     ClientConnection newConnection { newClientSocketFd, clientAddr, clientAddrStr };
                     _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
+                    _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
                     return true;
                 } else {
-                    throw std::runtime_error("Failed to send handshake response to client: " + clientAddrStr);
+                    auto err = ("Failed to send handshake response to client: " + clientAddrStr);
+                    _clientCloseQueue.push({ newClientSocketFd, false, err });
+                    _logger.log(LogLevel::Error, err);
                 }
             } else {
                 // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
-                // (control flow via exception since all the cleanup logic is in the catch already)
-                throw std::runtime_error("Client Connection closed from remote: " + clientAddrStr);
+                auto err = ("Client Connection closed from remote: " + clientAddrStr);
+                _clientCloseQueue.push({ newClientSocketFd, false, err });
+                _logger.log(LogLevel::Error, err);
             }
+
+            return true;
         } catch(const std::exception& e) {
-            _logger.log(LogLevel::Error, "ConnectionHandler: " + std::string(e.what()));
-            if(newClientSocketFd >= 0) {
-                close(newClientSocketFd);
-                epoll_ctl(_epollfd, EPOLL_CTL_DEL, newClientSocketFd, nullptr);
-            }
+            _logger.log(LogLevel::Error, "Handle connection: " + std::string(e.what()));
             return false;
         }
     }
 
-    bool handleMessageInput(const ClientConnection* const client) {
+    bool coreInputHandler(const ClientConnection* const client) {
         try {
-            std::vector<rsByte> recvBuf(_config.recvBufferSize);
-            ssize_t bytesRecv = 0; // Overall bytes received (incoming message)
-            ssize_t tmpRecv   = 0; // "Batch" Bytes received in one recv call
-
             // Receive incoming data, until there is no more data to read on the client socket
+            std::vector<rsByte> recvBuf(_config.recvBufferSize);
+            rsInt64 bytesRecv = 0; // Overall bytes received (incoming message)
+            rsInt64 tmpRecv   = 0; // "Batch" Bytes received in one recv call
             while((tmpRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0)) > 0) {
                 bytesRecv += tmpRecv;
 
                 // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
                 // TODO: This could be easily abused by a client to allocate a lot of memory on the server!!!!
-                if(bytesRecv == recvBuf.size())
+                if(bytesRecv == (rsInt64)recvBuf.size())
                     recvBuf.resize(recvBuf.size() * 2);
             }
 
             if(bytesRecv > 0) {
-                ClientMessage message = _serverInputHandler.handleInputData(client->clientSocketfd, recvBuf);
-                _messageQueue.push(std::make_unique<ClientMessage>(message));
-                //_logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
+                auto result = _serverInputHandler.parseWsDataFrame(client->clientSocketfd, recvBuf);
+                if(std::holds_alternative<ClientMessage>(result)) {
+                    _clientMessageQueue.push(std::make_unique<ClientMessage>(std::get<ClientMessage>(result)));
+                    //_logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
+                    return true;
+                } else if(std::holds_alternative<CloseCondition>(result)) {
+                    // Close the connection in case the input handler returned a CloseCondition
+                    _clientCloseQueue.push(std::get<CloseCondition>(result));
+                    return false;
+                }
+            } else if(bytesRecv == 0) {
+                // In case recv returns 0, the connection should be closed (client has closed)
+                _clientCloseQueue.push({ client->clientSocketfd, true, "NORMAL_CLOSURE", WsCloseCode::NORMAL_CLOSURE });
                 return true;
             } else {
-                // In case recv returns 0, the connection should be closed (client has closed)
                 // In case recv return -1, there was an error and the connection should be closed
-                // (control flow via exception since all the cleanup logic is in the catch already)
-                throw std::runtime_error("Client Connection closed: " + client->clientAddrStr);
+                _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
+                return false;
             }
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
-            // (Remove the client from the epoll instance, the clientConnections and close the socket)
-            epoll_ctl(_epollfd, EPOLL_CTL_DEL, client->clientSocketfd, nullptr);
-            _clientConnections.erase(client->clientSocketfd);
-            close(client->clientSocketfd);
+            _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
 
             // Log Info (not Error) since its is a expected result for a connection to be closed somehow
-            _logger.log(LogLevel::Info, "Handle data: " + std::string(e.what()));
+            _logger.log(LogLevel::Info, "Handle input: " + std::string(e.what()));
             return false;
         }
     }
 
-    bool handleMessageOutput(const ClientMessage* const message) {
+    bool coreOutputHandler(const ClientMessage* const message) {
         try {
             // Based on the input message, generate a output message (WebSocket frame)
-            auto outputMessage = _serverOutputHandler.handleOutputData(message);
-
-            if(_config.outputMethod == OutputMethod::Echo) {
-                // Echo the message back to the client (if it still exists in the clientConnections)
-                auto clientIter = _clientConnections.find(message->clientSocketfd);
-                if(clientIter != _clientConnections.end()) {
-                    ssize_t bytesWritten = send(message->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
-                    if(bytesWritten < 0) {
-                        // throw std::runtime_error("Failed to send message to client: " + clientIter->second->clientAddrStr);
-                        // ...
+            auto result = _serverOutputHandler.generateWsDataFrame(message);
+            if(std::holds_alternative<std::vector<rsByte>>(result)) {
+                const std::vector<rsByte>& outputMessage = std::get<std::vector<rsByte>>(result);
+                if(_config.outputMethod == OutputMethod::Echo) {
+                    // Echo the message back to the client (if it still exists in the clientConnections)
+                    auto clientIter = _clientConnections.find(message->clientSocketfd);
+                    if(clientIter != _clientConnections.end()) {
+                        ssize_t bytesWritten = send(message->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
+                        if(bytesWritten < 0) {
+                            // throw std::runtime_error("Failed to send message to client: " + clientIter->second->clientAddrStr);
+                            // ...
+                        }
                     }
-                }
-            } else if(_config.outputMethod == OutputMethod::Broadcast) {
-                // Broadcast the message to all clients
-                for(auto& client: _clientConnections) {
-                    ssize_t bytesWritten = send(client.second->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
-                    if(bytesWritten < 0) {
-                        // throw std::runtime_error("Failed to send message to client: " + client.second->clientAddrStr);
-                        // ...
+                } else if(_config.outputMethod == OutputMethod::Broadcast) {
+                    // Broadcast the message to all clients
+                    for(auto& client: _clientConnections) {
+                        ssize_t bytesWritten = send(client.second->clientSocketfd, &outputMessage[0], outputMessage.size(), 0);
+                        if(bytesWritten < 0) {
+                            // throw std::runtime_error("Failed to send message to client: " + client.second->clientAddrStr);
+                            // ...
+                        }
                     }
+                } else if(_config.outputMethod == OutputMethod::Custom) {
+                    // Custom output behavior
+                    // ...
                 }
-            } else if(_config.outputMethod == OutputMethod::Custom) {
-                // Custom output behavior
-                // ...
+                return true;
+            } else {
+                // Close the connection in case the output handler returned a CloseCondition
+                _clientCloseQueue.push(std::get<CloseCondition>(result));
+                return false;
             }
-
-            return true;
         } catch(const std::exception& e) {
-            _logger.log(LogLevel::Error, "Handle output: " + std::string(e.what()));
+            // Close the connection in case recv returned 0 or a error was thrown
+            _clientCloseQueue.push({ message->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
+
+            // Log Info (not Error) since its is a expected result for a connection to be closed somehow
+            _logger.log(LogLevel::Info, "Handle output: " + std::string(e.what()));
             return false;
         }
     }
 
-    //
-    // Return a IPv4/IPv6 address as a (readable) string
-    //
-    std::string extractIpAddrString(sockaddr_storage* addr) const {
-        if(addr->ss_family == AF_INET) {
-            // IP v4 Address
-            struct sockaddr_in* addr_v4 = (struct sockaddr_in*)addr;
-            return std::string(inet_ntoa(addr_v4->sin_addr));
-        } else {
-            // IP v6 Address
-            char a[INET6_ADDRSTRLEN] { '\0' };
-            struct sockaddr_in6* addr_v6 = (struct sockaddr_in6*)addr;
-            inet_ntop(AF_INET6, &(addr_v6->sin6_addr), a, INET6_ADDRSTRLEN);
-            return std::string(a);
+    bool coreConnectionCloseHandler(const CloseCondition& condition) {
+        try {
+            if(condition.wsConnectionEstablished) {
+                // Send a WebSocket close frame to the client
+                std::vector<rsByte> closeFrame = _serverOutputHandler.generateWsCloseFrame(static_cast<rsUInt16>(condition.closeCode));
+                rsInt64 bytesWritten           = send(condition.clientSocketfd, &closeFrame[0], closeFrame.size(), 0);
+                if(bytesWritten < 0) {
+                    _logger.log(LogLevel::Error, "Failed to send close frame to client: ");
+                }
+            }
+
+            // Remove the client from the clientConnections, if the client exists there
+            if(_clientConnections.find(condition.clientSocketfd) != _clientConnections.end()) {
+                _clientConnections.erase(condition.clientSocketfd);
+            }
+
+            // Finally: Close the TCP/Socket connection (and remove the client from the epoll instance)
+            if(condition.clientSocketfd >= 0) {
+                epoll_ctl(_epollfd, EPOLL_CTL_DEL, condition.clientSocketfd, nullptr);
+                close(condition.clientSocketfd);
+            }
+
+            _logger.log(LogLevel::Info, "Client Connection closed: " + condition.closeInfo);
+            return true;
+        } catch(const std::exception& e) {
+            _logger.log(LogLevel::Error, "Handle close: " + std::string(e.what()));
+            return false;
         }
     }
 
@@ -298,7 +338,8 @@ class Server {
     const ServerConfig& _config;
     addrinfo* _serverAddrListFull;
     // Server Clients
-    std::queue<std::unique_ptr<ClientMessage>> _messageQueue;
+    std::queue<CloseCondition> _clientCloseQueue;
+    std::queue<std::unique_ptr<ClientMessage>> _clientMessageQueue;
     std::unordered_map<int, std::unique_ptr<ClientConnection>> _clientConnections;
     // Server Utility
     const ServerConnectionHandler _serverConnectionHandler;
