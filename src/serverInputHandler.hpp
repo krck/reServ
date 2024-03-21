@@ -24,40 +24,6 @@ class ServerInputHandler {
     ~ServerInputHandler() = default;
 
   public:
-    bool parseFrameLength(const std::vector<rsByte>& buffer) const {
-        if(buffer.size() < 2) {
-            // Not enough data for the header
-            return false;
-        }
-
-        rsByte payloadLen = buffer[1] & 0x7F;
-        size_t headerSize = 2;
-        if(payloadLen == 126) {
-            headerSize += 2;
-        } else if(payloadLen == 127) {
-            headerSize += 8;
-        }
-
-        if(buffer.size() < headerSize) {
-            // Not enough data for the extended payload length
-            return false;
-        }
-
-        size_t totalSize = headerSize;
-        if(payloadLen == 126) {
-            totalSize += (buffer[2] << 8) | buffer[3];
-        } else if(payloadLen == 127) {
-            for(int i = 0; i < 8; i++) {
-                totalSize = (totalSize << 8) | buffer[2 + i];
-            }
-        } else {
-            totalSize += payloadLen;
-        }
-
-        // Check if we have enough data for the full frame
-        return buffer.size() >= totalSize;
-    }
-
     std::variant<ClientMessage, CloseCondition> parseWsDataFrame(int clientSocketfd, const std::vector<rsByte>& messageBytes) const {
         // Add some logic for "fragmented" messages here
         // WebSocket: Message only ends, when the FIN bit is set (one client can send multiple messages in one packet)
@@ -132,7 +98,7 @@ class ServerInputHandler {
             payloadData[i] = (messageBytes[frameIdx++] ^ ((maskingKey >> (8 * (3 - i % 4))) & 0xFF));
         }
 
-        return ClientMessage { clientSocketfd, fin, rsv, opc, payloadData };
+        return ClientMessage { clientSocketfd, fin, rsv, opc, maskingKey, actualPayloadLength };
     }
 
   private:

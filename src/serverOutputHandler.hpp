@@ -36,7 +36,7 @@ class ServerOutputHandler {
 
         if(message->opc == WsFrame_OPC::TEXT || message->opc == WsFrame_OPC::BINARY) {
             std::vector<rsByte> frame;
-            frame.reserve(message->payloadData.size() + _config.frameHeaderSize);
+            frame.reserve(message->size() + _config.frameHeaderSize);
 
             // The first BYTE contains the FIN bit, RSV1, RSV2, RSV3, and the OP-Code
             // |7|6|5|4|3|2|1|0|
@@ -46,7 +46,7 @@ class ServerOutputHandler {
             frame.push_back(firstByte);
 
             // Second byte: Mask and payload length
-            const size_t payloadLength = message->payloadData.size();
+            const size_t payloadLength = message->size();
             rsByte secondByte          = 0x00;
             if(payloadLength <= 125) {
                 secondByte |= payloadLength;
@@ -69,12 +69,12 @@ class ServerOutputHandler {
                 frame.push_back(payloadLength & 0xFF);
             }
 
-            frame.insert(frame.end(), message->payloadData.begin(), message->payloadData.end());
+            frame.insert(frame.end(), message->getPayload().begin(), message->getPayload().end());
             return frame;
         } else if(message->opc == WsFrame_OPC::PING) {
             // Create a PONG frame, that mirrors the payload of the PING frame (if there is any)
             std::vector<rsByte> pongFrame { 0x8A, 0x00 };
-            pongFrame.insert(pongFrame.end(), message->payloadData.begin(), message->payloadData.end());
+            pongFrame.insert(pongFrame.end(), message->getPayload().begin(), message->getPayload().end());
             return pongFrame;
         } else /* if(message->opc == WsFrame_OPC::CLOSE) */ {
             return CloseCondition { message->clientSocketfd, true, "Client requested close", WsCloseCode::NORMAL_CLOSURE };
