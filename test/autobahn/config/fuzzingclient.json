@@ -7,16 +7,7 @@
         }
     ],
     "cases": [
-<<<<<<< 20f116b6a090594706c395eb9c71b6f459b30b71
-<<<<<<< 20f116b6a090594706c395eb9c71b6f459b30b71
-        "1.1.6"
-=======
-        "9.1.*",
-        "9.2.*"
->>>>>>> 345
-=======
-        "1.1.2"
->>>>>>> full recv rework - segmentaion #1
+        "1.*"
     ],
     "exclude-cases": [],
     "exclude-agent-cases": {}

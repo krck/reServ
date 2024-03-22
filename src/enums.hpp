@@ -19,6 +19,14 @@ enum class HandshakeValidationCode {
     VersionNotSupported = 3,
 };
 
+enum class RecvError {
+    OK              = 0,
+    ConnectionClose = 1,
+    MessageToBig    = 2,
+    Timeout         = 3,
+    Unknown         = 4
+};
+
 enum WsFrame_FIN : rsByte {
     CONTINUATION_FRAME = 0x00,
     FINAL_FRAME        = 0x80

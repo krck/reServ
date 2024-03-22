@@ -2,12 +2,12 @@
 #define RESERV_SERVER_H
 
 #include "clientConnection.hpp"
+#include "closeCondition.hpp"
 #include "configService.hpp"
 #include "enums.hpp"
 #include "helpers.hpp"
 #include "logger.hpp"
 #include "serverConnectionHandler.hpp"
-#include "serverInputHandler.hpp"
 #include "serverOutputHandler.hpp"
 #include "types.hpp"
 
@@ -19,6 +19,7 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <variant>
 
 namespace reServ::Server {
 
@@ -29,8 +30,8 @@ class Server {
   public:
     Server() :
       _epollfd(-1), _mainSocketfd(-1), _config(ConfigService::instance().getServerConfig()), _serverAddrListFull(nullptr), _clientCloseQueue(),
-      _clientMessageQueue(), _clientConnections(), _serverConnectionHandler(ServerConnectionHandler()), _serverOutputHandler(ServerOutputHandler()),
-      _serverInputHandler(ServerInputHandler()), _logger(Logger::instance()) {
+      _clientMessageQueue(), _messageSegmentationBuffer(), _clientConnections(), _serverConnectionHandler(ServerConnectionHandler()),
+      _serverOutputHandler(ServerOutputHandler()), _logger(Logger::instance()) {
         // Reserve some heap space to reduce memory allocation overhead when new clients are connected
         _clientConnections.reserve(200);
     }
@@ -212,103 +213,16 @@ class Server {
         }
     }
 
-    std::unordered_map<int, std::unique_ptr<ClientMessage>> _messageSegmentationBuffer;
-
     bool coreInputHandler(const ClientConnection* const client) {
         try {
-            // Receive incoming data, until there is no more data to read on the client socket
-            std::vector<rsByte> recvBuf(_config.recvBufferSize);
-            rsInt64 bytesRecv    = 0; // Overall bytes received (incoming message)
-            rsInt64 tmpBytesRecv = 0; // "Batch" Bytes received in one recv call
-            while((tmpBytesRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0)) > 0) {
-                bytesRecv += tmpBytesRecv;
-                // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
-                if(bytesRecv == (rsInt64)recvBuf.size()) {
-                    // Check for buffer overflow (if buffer is too large, close the connection)
-                    if(recvBuf.size() * 2 > (rsUInt64)(_config.maxPayloadLength + _config.frameHeaderSize)) {
-                        _clientCloseQueue.push({ client->clientSocketfd, true, "MESSAGE_TOO_BIG", WsCloseCode::MESSAGE_TOO_BIG });
-                        return false;
-                    }
-
-                    recvBuf.resize(recvBuf.size() * 2);
-                }
+            std::vector<rsByte> recvBuf;
+            auto result = recvFromSocket(client->clientSocketfd, recvBuf);
+            if(std::holds_alternative<RecvError>(result) && std::get<RecvError>(result) == RecvError::MessageToBig) {
+                _clientCloseQueue.push({ client->clientSocketfd, true, "MESSAGE_TOO_BIG", WsCloseCode::MESSAGE_TOO_BIG });
+                return false;
             }
 
-<<<<<<< 20f116b6a090594706c395eb9c71b6f459b30b71
-            // while(true) {
-            //     tmpRecv = recv(client->clientSocketfd, &recvBuf[bytesRecv], recvBuf.size() - bytesRecv, 0);
-
-            //     // Handle recv errors or connection closure
-            //     if(tmpRecv == 0) {
-            //         _clientCloseQueue.push({ client->clientSocketfd, true, "NORMAL_CLOSURE", WsCloseCode::NORMAL_CLOSURE });
-            //         return false;
-            //     } else if(tmpRecv < 0) {
-            //         _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
-            //         return false;
-            //     }
-
-            //     bytesRecv += tmpRecv;
-
-            //     // Check if we have a complete WebSocket frame
-            //     if(_serverInputHandler.parseFrameLength(recvBuf)) {
-            //         break;
-            //     }
-
-            //     // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
-            //     if(bytesRecv == (rsInt64)recvBuf.size()) {
-            //         // Check for buffer overflow (if buffer is too large, close the connection)
-            //         if(recvBuf.size() * 2 > (_config.maxPayloadLength + _config.frameHeaderSize)) {
-            //             _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
-            //             return false;
-            //         }
-
-            //         recvBuf.resize(recvBuf.size() * 2);
-            //     }
-            // }
-
-<<<<<<< 20f116b6a090594706c395eb9c71b6f459b30b71
-            if(bytesRecv > 0) {
-                _logger.log(LogLevel::Debug, "Received message: " + std::to_string(bytesRecv));
-=======
-                // --------------------------------------- APPEND SEGMENT DATA TO THE MESSAGE --------------------------------------
-                // -- Get the message segment for this client and append the received data. Then check if the message is complete --
-                // -----------------------------------------------------------------------------------------------------------------
-                auto& message = _messageSegmentationBuffer[client->clientSocketfd];
-                // Read the Payload Data
-                // (In theory divided into "Extension Data" and "Application Data", but extention must be specifically negotiated)
-                const rsUInt64 framePayloadSize = (bytesRecv - headerFrameSize);
-                const rsUInt32 maskingKey       = message->maskingKey;
-                std::vector<rsByte> payloadData(framePayloadSize);
-                for(rsUInt64 i = 0; i < framePayloadSize; i++) {
-                    // For each byte in the payload, perform an XOR operation with the corresponding byte from the masking key
-                    // The masking key is treated as a circular array, hence the use of 'i % 4' to select the next appropriate byte
-                    payloadData[i] = (recvBuf[headerFrameSize++] ^ ((maskingKey >> (8 * (3 - i % 4))) & 0xFF));
-                }
-                message->appendPayload(payloadData);
-
-<<<<<<< 20f116b6a090594706c395eb9c71b6f459b30b71
-                //_logger.log(LogLevel::Debug, "Received message segment: " + std::to_string(bytesRecv) + " pl:" + std::to_string(framePayloadSize));
-                //_logger.log(LogLevel::Debug, "Received message: " + std::string(payloadData.begin(), payloadData.end()));
-
-                // Check if the message is complete
-                if(message->isReceived()) {
-                    //_logger.log(LogLevel::Debug, "Received message complete.");
->>>>>>> 345
-
-                auto result = _serverInputHandler.parseWsDataFrame(client->clientSocketfd, recvBuf);
-                if(std::holds_alternative<ClientMessage>(result)) {
-                    _clientMessageQueue.push(std::make_unique<ClientMessage>(std::get<ClientMessage>(result)));
-=======
-                _logger.log(LogLevel::Debug, "Received message segment: " + std::to_string(bytesRecv) + " pl:" + std::to_string(framePayloadSize));
-                _logger.log(LogLevel::Debug, "Received message: " + std::string(payloadData.begin(), payloadData.end()));
-
-                // Check if the message is complete
-                if(message->isReceived()) {
-                    _logger.log(LogLevel::Debug, "Received message complete.");
-
-                    // The message is complete and can be processed
->>>>>>> 123
-=======
+            const rsInt64 bytesRecv = std::get<rsInt64>(result);
             if(bytesRecv > 0) {
                 // ---------------------------------------------- CREATE NEW MESSAGE -----------------------------------------------
                 // -- If no uncompleted segment exists, then this is the beginning of a new message and the header must be parsed --
@@ -400,7 +314,7 @@ class Server {
                 // Read the Payload Data
                 // (In theory divided into "Extension Data" and "Application Data", but extention must be specifically negotiated)
                 const rsUInt64 framePayloadSize = (bytesRecv - headerFrameSize);
-                const rsUInt8 maskingKey        = message->maskingKey;
+                const rsUInt32 maskingKey       = message->maskingKey;
                 std::vector<rsByte> payloadData(framePayloadSize);
                 for(rsUInt64 i = 0; i < framePayloadSize; i++) {
                     // For each byte in the payload, perform an XOR operation with the corresponding byte from the masking key
@@ -409,11 +323,11 @@ class Server {
                 }
                 message->appendPayload(payloadData);
 
-                // Check if the message is complete
+                _logger.log(LogLevel::Debug, "Received message segment: " + std::to_string(bytesRecv) + " pl:" + std::to_string(framePayloadSize));
+                //_logger.log(LogLevel::Debug, "Received message: " + std::string(payloadData.begin(), payloadData.end()));
+
+                // Check if the message is complete and can be processed
                 if(message->isReceived()) {
-                    // The message is complete and can be processed
->>>>>>> full recv rework - segmentaion #1
-                    //_logger.log(LogLevel::Info, "Received message: " + message.payloadPlainText);
                     _clientMessageQueue.push(std::move(message));
                     _messageSegmentationBuffer.erase(client->clientSocketfd);
                     return true;
@@ -432,30 +346,18 @@ class Server {
             _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
             _messageSegmentationBuffer.erase(client->clientSocketfd);
 
-            // Log Info (not Error) since its is a expected result for a connection to be closed somehow
-            _logger.log(LogLevel::Info, "Handle input: " + std::string(e.what()));
+            _logger.log(LogLevel::Error, "Handle input: " + std::string(e.what()));
             return false;
         }
     }
 
     bool coreOutputHandler(const ClientMessage* const message) {
         try {
-<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
-<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
-=======
             // The client connection was closed in the meantime, so the message should not be sent
             if(_clientConnections.find(message->clientSocketfd) == _clientConnections.end() || message == nullptr) {
                 return false;
             }
 
->>>>>>> fix recv (split frames)
-=======
-            // The client connection was closed in the meantime, so the message should not be sent
-            if(_clientConnections.find(message->clientSocketfd) == _clientConnections.end() || message == nullptr || message->payloadData.empty()) {
-                return false;
-            }
-
->>>>>>> ping pong #1
             // Based on the input message, generate a output message (WebSocket frame)
             auto result = _serverOutputHandler.generateWsDataFrame(_clientConnections[message->clientSocketfd].get(), message);
             if(std::holds_alternative<std::vector<rsByte>>(result)) {
@@ -465,16 +367,10 @@ class Server {
                     auto clientIter = _clientConnections.find(message->clientSocketfd);
                     if(clientIter != _clientConnections.end()) {
                         ssize_t bytesWritten = sendToSocket(message->clientSocketfd, outputMessage);
-<<<<<<< 20f116b6a090594706c395eb9c71b6f459b30b71
-<<<<<<< 20f116b6a090594706c395eb9c71b6f459b30b71
-=======
-                        //_logger.log(LogLevel::Debug, "Echo message sent: " + std::to_string(bytesWritten));
-                        //_logger.log(LogLevel::Debug, "Echo message: " + std::string(outputMessage.begin(), outputMessage.end()));
->>>>>>> 345
-=======
+
                         _logger.log(LogLevel::Debug, "Echo message sent: " + std::to_string(bytesWritten));
-                        _logger.log(LogLevel::Debug, "Echo message: " + std::string(outputMessage.begin(), outputMessage.end()));
->>>>>>> 123
+                        // _logger.log(LogLevel::Debug, "Echo message: " + std::string(outputMessage.begin(), outputMessage.end()));
+
                         if(bytesWritten < 0) {
                             // throw std::runtime_error("Failed to send message to client: " + clientIter->second->clientAddrStr);
                             // ...
@@ -503,8 +399,7 @@ class Server {
             // Close the connection in case recv returned 0 or a error was thrown
             _clientCloseQueue.push({ message->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
 
-            // Log Info (not Error) since its is a expected result for a connection to be closed somehow
-            _logger.log(LogLevel::Info, "Handle output: " + std::string(e.what()));
+            _logger.log(LogLevel::Error, "Handle output: " + std::string(e.what()));
             return false;
         }
     }
@@ -514,17 +409,8 @@ class Server {
             if(condition.wsConnectionEstablished) {
                 // Send a WebSocket close frame to the client
                 std::vector<rsByte> closeFrame = _serverOutputHandler.generateWsCloseFrame(static_cast<rsUInt16>(condition.closeCode));
-<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
-<<<<<<< bda6237de65624b061d028e5a1626f6ac8125657
-                rsInt64 bytesWritten           = send(condition.clientSocketfd, &closeFrame[0], closeFrame.size(), 0);
-=======
-                rsInt64 bytesWritten           = sendToSocket(condition.clientSocketfd, closeFrame);
-
->>>>>>> fix recv (split frames)
-=======
-                rsInt64 bytesWritten           = sendToSocket(condition.clientSocketfd, closeFrame);
->>>>>>> ping pong #1
-                if(bytesWritten < 0) {
+                rsInt64 bytesSent              = sendToSocket(condition.clientSocketfd, closeFrame);
+                if(bytesSent < 0) {
                     _logger.log(LogLevel::Error, "Failed to send close frame to client: ");
                 }
             }
@@ -552,17 +438,18 @@ class Server {
     //
     // Send Wrapper
     //
-    rsInt64 sendToSocket(int sockfd, const std::vector<rsByte>& data, int flags = 0) noexcept {
-        // Check for any socket errors
-        int optval;
-        socklen_t optlen = sizeof(optval);
-        if(getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &optval, &optlen) != 0)
-            return -1;
-
-        if(optval == 0) {
-            // If there are no errors, send the close frame
-            rsInt64 bytesSent = send(sockfd, &data[0], data.size(), flags);
-            if(bytesSent == -1 && errno == EPIPE) {
+    rsInt64 sendToSocket(int clientSocketfd, const std::vector<rsByte>& sendBuf, int flags = 0) noexcept {
+        rsInt64 totalBytesSent = 0;
+        while(totalBytesSent < sendBuf.size()) {
+            // Call send with MSG_NOSIGNAL to prevent the send function from raising a SIGPIPE signal
+            // (instead it will return -1 and set errno to EPIPE if the connection is broken)
+            rsInt64 bytesSent = send(clientSocketfd, &sendBuf[totalBytesSent], sendBuf.size() - totalBytesSent, flags | MSG_NOSIGNAL);
+            if(bytesSent == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // The send would block, so wait a bit and try again
+                // Wait for 1 millisecond (1000 microseconds)
+                usleep(1000);
+                continue;
+            } else if(bytesSent == -1 && errno == EPIPE) {
                 // Handle broken pipe error
                 _logger.log(LogLevel::Error, "Broken pipe error: " + std::string(strerror(errno)));
                 return -1;
@@ -571,11 +458,37 @@ class Server {
                 _logger.log(LogLevel::Error, "Socket error: " + std::string(strerror(errno)));
                 return -1;
             }
-            return bytesSent;
-        } else {
-            _logger.log(LogLevel::Error, "Socket error: " + std::string(strerror(optval)));
-            return -1;
+            totalBytesSent += bytesSent;
         }
+        return totalBytesSent;
+    }
+
+    //
+    // Recv Wrapper
+    //
+    std::variant<rsInt64, RecvError> recvFromSocket(int clientSocketfd, std::vector<rsByte>& recvBuf, int flags = 0) noexcept {
+        rsInt64 totalBytesRecv = 0;
+        rsInt64 bytesRecv      = 0;
+
+        // Clear and resize the buffer (swap-and-clear)
+        std::vector<rsByte>(_config.recvBufferSize).swap(recvBuf);
+
+        // Receive incoming data, until there is no more data to read on the client socket
+        while((bytesRecv = recv(clientSocketfd, &recvBuf[totalBytesRecv], recvBuf.size() - totalBytesRecv, flags)) > 0) {
+            totalBytesRecv += bytesRecv;
+
+            // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
+            if(totalBytesRecv == (rsInt64)recvBuf.size()) {
+                // Check for buffer overflow (if buffer is too large, close the connection)
+                if(recvBuf.size() * 2 > (rsUInt64)(_config.maxPayloadLength + _config.frameHeaderSize)) {
+                    return RecvError::MessageToBig;
+                }
+
+                recvBuf.resize(recvBuf.size() * 2);
+            }
+        }
+
+        return totalBytesRecv;
     }
 
   private:
@@ -587,11 +500,11 @@ class Server {
     // Server Clients
     std::queue<CloseCondition> _clientCloseQueue;
     std::queue<std::unique_ptr<ClientMessage>> _clientMessageQueue;
+    std::unordered_map<int, std::unique_ptr<ClientMessage>> _messageSegmentationBuffer;
     std::unordered_map<int, std::unique_ptr<ClientConnection>> _clientConnections;
     // Server Utility
     const ServerConnectionHandler _serverConnectionHandler;
     const ServerOutputHandler _serverOutputHandler;
-    const ServerInputHandler _serverInputHandler;
     Logger& _logger;
 };
 

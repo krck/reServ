@@ -32,7 +32,7 @@ class Logger {
 
     void log(LogLevel level, const std::string& message) {
         // std::lock_guard<std::mutex> lock(queueMutex);
-        // logQueue.push({ level, message });
+        // [SINGLE THREAD DEBUG] logQueue.push({ level, message });
 
         printLogEntry({ level, message });
     }
@@ -92,7 +92,7 @@ class Logger {
             case LogLevel::Error: levelString = "ERROR"; break;
             default: break;
         }
-        //std::lock_guard<std::mutex> lock(printMutex);
+        // [SINGLE THREAD DEBUG] std::lock_guard<std::mutex> lock(printMutex);
         std::cout << "[" << timeString << "][" << levelString << "]: " << entry.message << std::endl;
     }
 
