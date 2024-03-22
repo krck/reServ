@@ -20,11 +20,19 @@ enum class HandshakeValidationCode {
 };
 
 enum class RecvError {
-    OK              = 0,
-    ConnectionClose = 1,
-    MessageToBig    = 2,
-    Timeout         = 3,
-    Unknown         = 4
+    OK                = 0,
+    ConnectionClose   = 1,
+    ConnectionReset   = 2,
+    MaxLengthExceeded = 3,
+    Timeout           = 4,
+    SocketError       = 5
+};
+
+enum class SendError {
+    OK          = 0,
+    BrokenPipe  = 1,
+    Timeout     = 2,
+    SocketError = 3
 };
 
 enum WsFrame_FIN : rsByte {
