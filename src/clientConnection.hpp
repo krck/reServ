@@ -10,6 +10,7 @@
 #include <string>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 namespace reServ::Client {
 
@@ -69,14 +70,16 @@ class ClientConnection {
     inline void setClosing() { _clientState = ClientWebSocketState::Closing; }
 
     ~ClientConnection() {
-        _logger.log(LogLevel::Debug, ("Client connection closed" + _clientAddrStr));
+        _logger.log(LogLevel::Debug, ("Client connection closed: " + _clientAddrStr));
 
         // Shutdown the TCP/Socket connection (and remove the client from the epoll instance)
         epoll_ctl(_mainEpollFd, EPOLL_CTL_DEL, clientSocketfd, nullptr);
-        if(shutdown(clientSocketfd, SHUT_RDWR) < 0) {
-            _logger.log(LogLevel::Error, ("Failed to shutdown client socket: " + _clientAddrStr));
-            _clientState = ClientWebSocketState::Error;
-        }
+        close(clientSocketfd);
+
+        // if(shutdown(clientSocketfd, SHUT_RDWR) < 0) {
+        //     _logger.log(LogLevel::Error, ("Failed to shutdown client socket: " + _clientAddrStr));
+        //     _clientState = ClientWebSocketState::Error;
+        // }
     };
 
   private:

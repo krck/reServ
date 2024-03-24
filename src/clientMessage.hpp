@@ -17,7 +17,11 @@ class Message {
     const OutputMethod outputMethod;
 
   public:
-    virtual ~Message() = default;
+    Message(int clientSocketfd, rsUInt64 fullPayloadLength, OutputMethod outputMethod) :
+      clientSocketfd(clientSocketfd), outputMethod(outputMethod), _fullPayloadLength(fullPayloadLength), _payloadData({}) {}
+
+    Message(int clientSocketfd, rsUInt64 fullPayloadLength, OutputMethod outputMethod, const std::vector<rsByte>& payloadData) :
+      clientSocketfd(clientSocketfd), outputMethod(outputMethod), _fullPayloadLength(fullPayloadLength), _payloadData(payloadData) {}
 
     inline rsUInt64 size() const { return _payloadData.size(); }
     inline bool isReceived() const { return (_fullPayloadLength == _payloadData.size()); }
@@ -30,12 +34,7 @@ class Message {
 
     const std::vector<rsByte>& getPayload() const { return _payloadData; }
 
-  protected:
-    Message(int clientSocketfd, rsUInt64 fullPayloadLength, OutputMethod outputMethod) :
-      clientSocketfd(clientSocketfd), outputMethod(outputMethod), _fullPayloadLength(fullPayloadLength), _payloadData({}) {}
-
-    Message(int clientSocketfd, rsUInt64 fullPayloadLength, OutputMethod outputMethod, const std::vector<rsByte>& payloadData) :
-      clientSocketfd(clientSocketfd), outputMethod(outputMethod), _fullPayloadLength(fullPayloadLength), _payloadData(payloadData) {}
+    virtual ~Message() = default;
 
   protected:
     const rsUInt64 _fullPayloadLength;

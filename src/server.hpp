@@ -173,7 +173,19 @@ class Server {
                 } else if(newClientSocketFd >= 0) {
                     ClientConnection newConnection { _epollfd, newClientSocketFd, clientAddr };
                     if(newConnection.getState() == ClientWebSocketState::Created) {
-                        _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
+                        std::vector<rsByte> recvBuf;
+                        auto result = recvFromSocket(newClientSocketFd, recvBuf);
+                        if(result.bytesRecv > 0) {
+                            // On a newly created connection the first message received MUST be a HTTP WebSocket upgrade request
+                            auto httpResponse = _serverConnectionHandler.handleHandshakeRequest(std::string(recvBuf.begin(), recvBuf.end()));
+                            std::vector<rsByte> responseBytes(httpResponse.begin(), httpResponse.end());
+
+                            auto message = std::make_unique<Message>(newClientSocketFd, responseBytes.size(), OutputMethod::Echo, responseBytes);
+                            _clientMessageQueue.push(std::move(message));
+                            newConnection.setHandshakeStarted();
+
+                            _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
+                        }
                     }
                 } else {
                     _logger.log(LogLevel::Error, "Failed to accept new client connection");
@@ -212,15 +224,7 @@ class Server {
                 return false;
             }
 
-            if(client->getState() == ClientWebSocketState::Created) {
-                // On a newly created connection the first message received MUST be a HTTP WebSocket upgrade request
-                auto httpResponse = _serverConnectionHandler.handleHandshakeRequest(std::string(recvBuf.begin(), recvBuf.end()));
-                std::vector<rsByte> responseBytes(httpResponse.begin(), httpResponse.end());
-
-                auto message = std::make_unique<Message>(client->clientSocketfd, responseBytes.size(), OutputMethod::Echo, responseBytes);
-                _clientMessageQueue.push(std::move(message));
-                client->setHandshakeStarted();
-            } else if(client->getState() == ClientWebSocketState::Open) {
+            if(client->getState() == ClientWebSocketState::Open) {
                 // ---------------------------------------------- CREATE NEW MESSAGE -----------------------------------------------
                 // -- If no uncompleted segment exists, then this is the beginning of a new message and the header must be parsed --
                 // -----------------------------------------------------------------------------------------------------------------
@@ -313,7 +317,8 @@ class Server {
 
                     // At this point, the header is fully parsed and validated
                     // (this means the message object can be created for the client)
-                    auto message = std::make_unique<WebSocketMessage>(client->clientSocketfd, fin, rsv, opc, maskingKey, actualPayloadLength);
+                    auto message = std::make_unique<WebSocketMessage>(client->clientSocketfd, fin, rsv, opc, maskingKey, actualPayloadLength,
+                                                                      _config.outputMethod);
                     _messageSegmentationBuffer.insert({ client->clientSocketfd, std::move(message) });
                 }
 
