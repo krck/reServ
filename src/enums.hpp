@@ -21,7 +21,8 @@ enum class ClientWebSocketState {
     Handshake,
     Open,
     Closing,
-    Closed
+    Closed,
+    Error
 };
 
 // Handshake validation results
@@ -44,15 +45,15 @@ enum class SocketState {
     Undefined,
 };
 
+enum class OutputMethod {
+    Echo,
+    Broadcast,
+    Custom
+};
+
 // -------------------------------------------------------------------
 // ------------------------ INT ENUM TYPES ---------------------------
 // -------------------------------------------------------------------
-
-enum OutputMethod : rsUInt8 {
-    Echo      = 0,
-    Broadcast = 1,
-    Custom    = 2
-};
 
 enum WsFrame_FIN : rsByte {
     CONTINUATION_FRAME = 0x00,

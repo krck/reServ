@@ -30,8 +30,8 @@ class ServerOutputHandler {
     ~ServerOutputHandler() = default;
 
   public:
-    std::variant<std::vector<rsByte>, CloseCondition> generateWsDataFrame(const ClientConnection* const client,
-                                                                          const ClientMessage* const message) const {
+    std::variant<std::vector<rsByte>, WsCloseCode> generateWsDataFrame(const ClientConnection* const client,
+                                                                       const WebSocketMessage* const message) const {
         // Add some logic for "fragmented" messages here
         // ...
 
@@ -78,7 +78,7 @@ class ServerOutputHandler {
             pongFrame.insert(pongFrame.end(), message->getPayload().begin(), message->getPayload().end());
             return pongFrame;
         } else /* if(message->opc == WsFrame_OPC::CLOSE) */ {
-            return CloseCondition { message->clientSocketfd, true, "Client requested close", WsCloseCode::NORMAL_CLOSURE };
+            return WsCloseCode::NORMAL_CLOSURE;
         }
     }
 

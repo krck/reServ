@@ -11,24 +11,17 @@ namespace reServ::Client {
 
 using namespace reServ::Common;
 
-struct ClientMessage {
+class Message {
   public:
     const int clientSocketfd;
-    const WsFrame_FIN fin;
-    const WsFrame_RSV rsv;
-    const WsFrame_OPC opc; // OpCode
-    const rsUInt32 maskingKey;
+    const OutputMethod outputMethod;
 
   public:
-    ClientMessage(int clientSocketfd, WsFrame_FIN fin, WsFrame_RSV rsv, WsFrame_OPC opc, rsUInt32 maskingKey, rsUInt64 fullPayloadLength) :
-      clientSocketfd(clientSocketfd), fin(fin), rsv(rsv), opc(opc), maskingKey(maskingKey), _fullPayloadLength(fullPayloadLength) {}
+    virtual ~Message() = default;
 
-    ~ClientMessage() = default;
-
-  public:
-    bool isReceived() const { return (_fullPayloadLength == _payloadData.size()); }
-    rsUInt64 remaining() const { return _fullPayloadLength - _payloadData.size(); }
-    rsUInt64 size() const { return _payloadData.size(); }
+    inline rsUInt64 size() const { return _payloadData.size(); }
+    inline bool isReceived() const { return (_fullPayloadLength == _payloadData.size()); }
+    inline rsUInt64 remaining() const { return _fullPayloadLength - _payloadData.size(); }
 
     void appendPayload(const std::vector<rsByte>& data) {
         _payloadData.reserve(_payloadData.size() + data.size());
@@ -37,10 +30,32 @@ struct ClientMessage {
 
     const std::vector<rsByte>& getPayload() const { return _payloadData; }
 
-  private:
+  protected:
+    Message(int clientSocketfd, rsUInt64 fullPayloadLength, OutputMethod outputMethod) :
+      clientSocketfd(clientSocketfd), outputMethod(outputMethod), _fullPayloadLength(fullPayloadLength), _payloadData({}) {}
+
+    Message(int clientSocketfd, rsUInt64 fullPayloadLength, OutputMethod outputMethod, const std::vector<rsByte>& payloadData) :
+      clientSocketfd(clientSocketfd), outputMethod(outputMethod), _fullPayloadLength(fullPayloadLength), _payloadData(payloadData) {}
+
+  protected:
     const rsUInt64 _fullPayloadLength;
     std::vector<rsByte> _payloadData;
-    // std::string(payloadData.begin(), payloadData.end())
+};
+
+class WebSocketMessage : public Message {
+  public:
+    const WsFrame_FIN fin;
+    const WsFrame_RSV rsv;
+    const WsFrame_OPC opc; // OpCode
+    const rsUInt32 maskingKey;
+
+  public:
+    WebSocketMessage(int clientSocketfd, WsFrame_FIN fin, WsFrame_RSV rsv, WsFrame_OPC opc, rsUInt32 maskingKey, rsUInt64 fullPayloadLength,
+                     OutputMethod outputMethod) :
+      Message(clientSocketfd, fullPayloadLength, outputMethod),
+      fin(fin), rsv(rsv), opc(opc), maskingKey(maskingKey) {}
+
+    ~WebSocketMessage() = default;
 };
 
 } // namespace reServ::Client

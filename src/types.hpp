@@ -5,6 +5,8 @@
 
 namespace reServ::Common {
 
+using rsSocketFd = int;
+
 using rsByte   = std::uint8_t;
 using rsUInt8  = std::uint8_t;
 using rsUInt16 = std::uint16_t;
