@@ -216,11 +216,11 @@ class Server {
 
                         // Send the handshake response to the client and save the new client connection
                         const auto result = sendToSocket(newClientSocketFd, respBytes);
-                        if(result.bytesSent >= 0) {
+                        if(result.bytesSent && result.state == SocketState::OK) {
                             ClientConnection newConnection { newClientSocketFd, clientAddr, clientAddrStr, event };
                             _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
                             _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
-                            return true;
+                            break;
                         } else {
                             auto err = ("Failed to send handshake response to client: " + clientAddrStr);
                             _clientCloseQueue.push({ newClientSocketFd, false, err });
@@ -234,27 +234,26 @@ class Server {
                         _logger.log(LogLevel::Error, err);
                         return false;
                     }
-
-                    return true;
                 }
             } catch(const std::exception& e) {
                 _logger.log(LogLevel::Error, "Handle connection: " + std::string(e.what()));
                 return false;
             }
         }
+        return true;
     }
 
     bool coreInputHandler(const ClientConnection* const client) {
         try {
             std::vector<rsByte> recvBuf;
             auto result = recvFromSocket(client->clientSocketfd, recvBuf);
-            if(result.bytesRecv == 0 || result.error == RecvError::ConnectionClose) {
+            if(result.bytesRecv == 0 || result.state == SocketState::ConnectionClose) {
                 _clientCloseQueue.push({ client->clientSocketfd, true, "NORMAL_CLOSURE", WsCloseCode::NORMAL_CLOSURE });
                 return false;
-            } else if(result.error == RecvError::MaxLengthExceeded) {
+            } else if(result.state == SocketState::MaxLengthExceeded) {
                 _clientCloseQueue.push({ client->clientSocketfd, true, "MESSAGE_TOO_BIG", WsCloseCode::MESSAGE_TOO_BIG });
                 return false;
-            } else if(result.error == RecvError::ConnectionReset || result.error == RecvError::SocketError) {
+            } else if(result.state == SocketState::ConnectionReset || result.state == SocketState::Undefined) {
                 _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
                 return false;
             }
@@ -263,7 +262,7 @@ class Server {
             // -- If no uncompleted segment exists, then this is the beginning of a new message and the header must be parsed --
             // -----------------------------------------------------------------------------------------------------------------
             rsUInt64 headerFrameSize = 0;
-            const rsInt64 bytesRecv  = result.bytesRecv;
+            const rsUInt64 bytesRecv = result.bytesRecv;
             if(_messageSegmentationBuffer.find(client->clientSocketfd) == _messageSegmentationBuffer.end()) {
                 // Validate if we have a complete WebSocket frame
                 // (must be at least two bytes for a basic header)
@@ -366,8 +365,8 @@ class Server {
             if(message->isReceived()) {
                 _clientMessageQueue.push(std::move(message));
                 _messageSegmentationBuffer.erase(client->clientSocketfd);
-                return true;
             }
+            return true;
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
             _clientCloseQueue.push({ client->clientSocketfd, true, "ABNORMAL_CLOSURE", WsCloseCode::ABNORMAL_CLOSURE });
@@ -398,7 +397,7 @@ class Server {
                         _logger.log(LogLevel::Debug, "Echo message sent: " + std::to_string(result.bytesSent));
                         // _logger.log(LogLevel::Debug, "Echo message: " + std::string(outputMessage.begin(), outputMessage.end()));
 
-                        if(result.bytesSent < 0) {
+                        if(result.state != SocketState::OK) {
                             // throw std::runtime_error("Failed to send message to client: " + clientIter->second->clientAddrStr);
                             // ...
                         }
@@ -407,7 +406,7 @@ class Server {
                     // Broadcast the message to all clients
                     for(auto& client: _clientConnections) {
                         const auto result = sendToSocket(client.second->clientSocketfd, outputMessage);
-                        if(result.bytesSent < 0) {
+                        if(result.state != SocketState::OK) {
                             // throw std::runtime_error("Failed to send message to client: " + client.second->clientAddrStr);
                             // ...
                         }
@@ -437,7 +436,7 @@ class Server {
                 // Send a WebSocket close frame to the client
                 std::vector<rsByte> closeFrame = _serverOutputHandler.generateWsCloseFrame(static_cast<rsUInt16>(condition.closeCode));
                 const auto result              = sendToSocket(condition.clientSocketfd, closeFrame);
-                if(result.bytesSent < 0) {
+                if(result.state != SocketState::OK) {
                     _logger.log(LogLevel::Error, "Failed to send close frame to client: ");
                 }
             }
@@ -466,13 +465,13 @@ class Server {
     // Send Wrapper
     //
     struct SendResult {
-        const rsInt64 bytesSent;
-        const SendError error;
+        const rsUInt64 bytesSent;
+        const SocketState state;
     };
     SendResult sendToSocket(int clientSocketfd, const std::vector<rsByte>& sendBuf, int flags = 0) noexcept {
-        rsInt64 totalBytesSent = 0;
+        rsUInt64 totalBytesSent = 0;
         while(totalBytesSent < sendBuf.size()) {
-            // Call send with MSG_NOSIGNAL to prevent the send function from raising a SIGPIPE signal
+            //  Call send with MSG_NOSIGNAL to prevent the send function from raising a SIGPIPE signal
             // (instead it will return -1 and set errno to EPIPE if the connection is broken)
             rsInt64 bytesSent = send(clientSocketfd, &sendBuf[totalBytesSent], sendBuf.size() - totalBytesSent, flags | MSG_NOSIGNAL);
             if(bytesSent == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -481,27 +480,27 @@ class Server {
             } else if(bytesSent == -1 && errno == EPIPE) {
                 // Handle broken pipe error
                 _logger.log(LogLevel::Error, "Broken pipe error: " + std::string(strerror(errno)));
-                return { totalBytesSent, SendError::BrokenPipe };
+                return { totalBytesSent, SocketState::BrokenPipe };
             } else if(bytesSent == -1) {
                 // Handle other errors
                 _logger.log(LogLevel::Error, "Socket error: " + std::string(strerror(errno)));
-                return { totalBytesSent, SendError::SocketError };
+                return { totalBytesSent, SocketState::Undefined };
             }
             totalBytesSent += bytesSent;
         }
-        return { totalBytesSent, SendError::OK };
+        return { totalBytesSent, SocketState::OK };
     }
 
     //
     // Recv Wrapper
     //
     struct RecvResult {
-        const rsInt64 bytesRecv;
-        const RecvError error;
+        const rsUInt64 bytesRecv;
+        const SocketState state;
     };
     RecvResult recvFromSocket(int clientSocketfd, std::vector<rsByte>& recvBuf, int flags = 0) noexcept {
-        rsInt64 totalBytesRecv = 0;
-        rsInt64 bytesRecv      = 0;
+        rsUInt64 totalBytesRecv = 0;
+        rsInt64 bytesRecv       = 0;
 
         // Clear and resize the buffer (swap-and-clear)
         std::vector<rsByte>(_config.recvBufferSize).swap(recvBuf);
@@ -515,31 +514,31 @@ class Server {
             } else if(bytesRecv == -1 && errno == ECONNRESET) {
                 // Handle connection reset by peer
                 _logger.log(LogLevel::Error, "Connection reset by peer: " + std::string(strerror(errno)));
-                return { totalBytesRecv, RecvError::ConnectionReset };
+                return { totalBytesRecv, SocketState::ConnectionReset };
             } else if(bytesRecv == -1) {
                 // Handle other errors
                 _logger.log(LogLevel::Error, "Socket error: " + std::string(strerror(errno)));
-                return { totalBytesRecv, RecvError::SocketError };
+                return { totalBytesRecv, SocketState::Undefined };
             } else if(bytesRecv == 0) {
                 // Handle connection closed by client
                 _logger.log(LogLevel::Error, "Connection closed by client: " + std::string(strerror(errno)));
-                return { totalBytesRecv, RecvError::ConnectionClose };
+                return { totalBytesRecv, SocketState::ConnectionClose };
             }
 
             totalBytesRecv += bytesRecv;
 
             // Resize the buffer if its full (scale by always doubling the size to reduce allocation overhead)
-            if(totalBytesRecv == (rsInt64)recvBuf.size()) {
+            if(totalBytesRecv == recvBuf.size()) {
                 // Check for buffer overflow (if buffer is too large, close the connection)
                 if(recvBuf.size() * 2 > (rsUInt64)(_config.maxPayloadLength + _config.frameHeaderSize)) {
                     _logger.log(LogLevel::Error, "Max length exceeded: " + std::to_string(totalBytesRecv));
-                    return { totalBytesRecv, RecvError::MaxLengthExceeded };
+                    return { totalBytesRecv, SocketState::MaxLengthExceeded };
                 }
                 recvBuf.resize(recvBuf.size() * 2);
             }
         }
 
-        return { totalBytesRecv, RecvError::OK };
+        return { totalBytesRecv, SocketState::OK };
     }
 
   private:

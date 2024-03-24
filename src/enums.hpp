@@ -5,34 +5,53 @@
 
 namespace reServ::Common {
 
+// -------------------------------------------------------------------
+// -------------------------- ENUM CLASSES ---------------------------
+// -------------------------------------------------------------------
+
+enum class LogLevel {
+    Debug,
+    Info,
+    Warning,
+    Error
+};
+
+enum class ClientWebSocketState {
+    Created,
+    Handshake,
+    Open,
+    Closing,
+    Closed
+};
+
+// Handshake validation results
+// (Based on HTTP status codes, since Handshake is an HTTP request)
+enum class HandshakeState {
+    OK,
+    BadRequest,
+    Forbidden,
+    VersionNotSupported,
+};
+
+// TCP Socket send/recv states
+enum class SocketState {
+    OK,
+    ConnectionClose,
+    ConnectionReset,
+    MaxLengthExceeded,
+    BrokenPipe,
+    Timeout,
+    Undefined,
+};
+
+// -------------------------------------------------------------------
+// ------------------------ INT ENUM TYPES ---------------------------
+// -------------------------------------------------------------------
+
 enum OutputMethod : rsUInt8 {
     Echo      = 0,
     Broadcast = 1,
     Custom    = 2
-};
-
-// Simple validation codes for the WebSocket handshake
-enum class HandshakeValidationCode {
-    OK                  = 0,
-    BadRequest          = 1,
-    Forbidden           = 2,
-    VersionNotSupported = 3,
-};
-
-enum class RecvError {
-    OK                = 0,
-    ConnectionClose   = 1,
-    ConnectionReset   = 2,
-    MaxLengthExceeded = 3,
-    Timeout           = 4,
-    SocketError       = 5
-};
-
-enum class SendError {
-    OK          = 0,
-    BrokenPipe  = 1,
-    Timeout     = 2,
-    SocketError = 3
 };
 
 enum WsFrame_FIN : rsByte {
@@ -73,13 +92,6 @@ enum WsCloseCode : rsUInt16 {
     TRY_AGAIN_LATER            = 1013,
     BAD_GATEWAY                = 1014,
     TLS_HANDSHAKE              = 1015
-};
-
-enum class LogLevel {
-    Debug,
-    Info,
-    Warning,
-    Error
 };
 
 } // namespace reServ::Common

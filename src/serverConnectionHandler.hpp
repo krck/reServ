@@ -38,17 +38,17 @@ class ServerConnectionHandler {
         if(isWebSocketUpgradeRequest(request)) {
             // NEW WEBSOCKET CONNECTION (upgrade-request)
             std::map<std::string, std::string> reqHeaders;
-            const HandshakeValidationCode validationCode = validateWebSocketUpgradeHeader(request, _config.wsVersion, reqHeaders);
+            const HandshakeState validationCode = validateWebSocketUpgradeHeader(request, _config.wsVersion, reqHeaders);
 
-            if(validationCode == HandshakeValidationCode::OK) {
+            if(validationCode == HandshakeState::OK) {
                 // The "Sec-WebSocket-Accept" header must be created and added to the response
                 std::string acceptKey = createWebSocketAcceptKey(reqHeaders["sec-websocket-key"]);
                 response              = getResponse_Handshake_SwitchingProtocols(acceptKey);
-            } else if(validationCode == HandshakeValidationCode::BadRequest) {
+            } else if(validationCode == HandshakeState::BadRequest) {
                 response = getResponse_Handshake_BadRequest();
-            } else if(validationCode == HandshakeValidationCode::Forbidden) {
+            } else if(validationCode == HandshakeState::Forbidden) {
                 response = getResponse_Handshake_Forbidden();
-            } else if(validationCode == HandshakeValidationCode::VersionNotSupported) {
+            } else if(validationCode == HandshakeState::VersionNotSupported) {
                 response = getResponse_UpgradeRequired(_config.wsVersion);
             }
         } else if(isHttpRequest(request)) {
@@ -63,8 +63,8 @@ class ServerConnectionHandler {
     }
 
   private:
-    HandshakeValidationCode validateWebSocketUpgradeHeader(std::string req, std::string supportedWsVersion,
-                                                           std::map<std::string, std::string>& headers) const {
+    HandshakeState validateWebSocketUpgradeHeader(std::string req, std::string supportedWsVersion,
+                                                  std::map<std::string, std::string>& headers) const {
         // Remove all whitespace, except line breaks from the request
         req.erase(std::remove_if(req.begin(), req.end(), [](unsigned char x) { return x == '\r' || x == '\t' || x == ' '; }), req.end());
 
@@ -100,12 +100,12 @@ class ServerConnectionHandler {
             // Must include "Connection: Upgrade"
             // Must include "Sec-WebSocket-Key" with a value
             // ... otherwise: Bad Request
-            return HandshakeValidationCode::BadRequest;
+            return HandshakeState::BadRequest;
         }
         if(headers.find("sec-websocket-version") == headers.end() || headers["sec-websocket-version"] != supportedWsVersion) {
             // Must include "Sec-WebSocket-Version" with a value
             // ... otherwise: Version Not Supported
-            return HandshakeValidationCode::VersionNotSupported;
+            return HandshakeState::VersionNotSupported;
         }
 
         // All browsers send a "Origin" header. This can be validated as well
@@ -115,7 +115,7 @@ class ServerConnectionHandler {
         //    return HandshakeValidationCode::Forbidden;
         //}
 
-        return HandshakeValidationCode::OK;
+        return HandshakeState::OK;
     }
 
     std::string createWebSocketAcceptKey(const std::string& webSocketKey) const {
