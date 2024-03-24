@@ -48,24 +48,31 @@ class Server {
                 throw std::runtime_error("Failed to initialize listening");
 
             // Create the epoll instance
-            if((_epollfd = epoll_create1(0)) <= 0)
+            if((_epollfd = epoll_create1(0)) < 0)
                 throw std::runtime_error("Failed to create epoll instance");
 
-            epoll_event event;
-            event.events  = EPOLLIN | EPOLLET;
-            event.data.fd = _mainSocketfd;
-            epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &event);
+            epoll_event mainCtlEvent {};
+            mainCtlEvent.data.fd = _mainSocketfd;
+            mainCtlEvent.events  = EPOLLIN | EPOLLET;
+            if(epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &mainCtlEvent) < 0)
+                throw std::runtime_error("Failed to add main socket to epoll instance");
 
             // -------------------------------------------------------------------------------------
             // Start the MAIN EVENT LOOP (that currently can never finish, just crash via exception)
             // -------------------------------------------------------------------------------------
             _logger.log(LogLevel::Info, "Server running: Main Socket listening on port " + std::to_string(_config.port));
+            std::vector<epoll_event> events(_config.maxEpollEvents);
             while(true) {
                 // 1. Handle INPUT (new client connections and existing client activity)
-                std::vector<epoll_event> events(_config.maxEpollEvents);
                 int numEvents = epoll_wait(_epollfd, &events[0], _config.maxEpollEvents, -1);
+                if(numEvents == -1)
+                    break;
+
                 for(int i = 0; i < numEvents; i++) {
-                    if(events[i].data.fd == _mainSocketfd) {
+                    if((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP) || (!(events[i].events & EPOLLIN))) {
+                        // Error case on the "write" event
+                        continue;
+                    } else if(events[i].data.fd == _mainSocketfd) {
                         // New client connection (if the "write" event is on the main listening socket)
                         coreConnectionCreateHandler();
                     } else if(_clientConnections.find(events[i].data.fd) != _clientConnections.end()) {
@@ -152,64 +159,88 @@ class Server {
 
         // Set the server socket to non-blocking mode
         // (For edge-triggered epoll, nonblocking sockets MUST be used)
-        fcntl(serverSocket, F_SETFL, O_NONBLOCK);
+        if(fcntl(serverSocket, F_SETFL, O_NONBLOCK) < 0) {
+            return -1;
+        }
 
         return serverSocket;
     }
 
     bool coreConnectionCreateHandler() {
-        int newClientSocketFd = -1;
-        try {
-            // Accept a new connection on the main/listening socket
-            // (creates a new client socket and establishes the connection)
-            sockaddr_storage clientAddr = {};
-            socklen_t clientAddrSize    = sizeof(clientAddr);
-            newClientSocketFd           = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
-            if(newClientSocketFd < 0) {
-                _logger.log(LogLevel::Error, "Failed to accept new client connection");
+        // Accept all new connections on the main/listening socket
+        // (creates a new client socket and establishes the connection)
+        while(true) {
+            try {
+                int newClientSocketFd = -1;
+
+                sockaddr_storage clientAddr = {};
+                socklen_t clientAddrSize    = sizeof(clientAddr);
+                newClientSocketFd           = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
+                if(newClientSocketFd < 0) {
+                    if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                        // No more new connections to accept
+                        break;
+                    } else {
+                        _logger.log(LogLevel::Error, "Failed to accept new client connection");
+                        return false;
+                    }
+                } else {
+                    auto clientAddrStr = extractIpAddrString(&clientAddr);
+
+                    // Receive initial data from the client
+                    std::vector<rsByte> recvBuffer(_config.recvBufferSize);
+                    ssize_t bytesRead = recv(newClientSocketFd, &recvBuffer[0], _config.recvBufferSize, 0);
+                    const std::string request(recvBuffer.begin(), recvBuffer.end());
+                    if(bytesRead > 0) {
+                        auto response = _serverConnectionHandler.handleHandshakeRequest(request);
+                        std::vector<rsByte> respBytes(response.begin(), response.end());
+
+                        // Set the client socket to non-blocking mode
+                        if(fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK) < 0) {
+                            auto err = ("Failed to set new client socket to non-blocking mode" + clientAddrStr);
+                            _clientCloseQueue.push({ newClientSocketFd, false, err });
+                            _logger.log(LogLevel::Error, err);
+                            return false;
+                        }
+
+                        // Add the new client socket to the epoll instance
+                        epoll_event event {};
+                        event.data.fd = newClientSocketFd;
+                        event.events  = EPOLLIN | EPOLLET; // read events in edge-triggered mode
+                        if(epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event) < 0) {
+                            auto err = ("Failed to add new client to epoll instance" + clientAddrStr);
+                            _clientCloseQueue.push({ newClientSocketFd, false, err });
+                            _logger.log(LogLevel::Error, err);
+                            return false;
+                        }
+
+                        // Send the handshake response to the client and save the new client connection
+                        const auto result = sendToSocket(newClientSocketFd, respBytes);
+                        if(result.bytesSent >= 0) {
+                            ClientConnection newConnection { newClientSocketFd, clientAddr, clientAddrStr, event };
+                            _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
+                            _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
+                            return true;
+                        } else {
+                            auto err = ("Failed to send handshake response to client: " + clientAddrStr);
+                            _clientCloseQueue.push({ newClientSocketFd, false, err });
+                            _logger.log(LogLevel::Error, err);
+                            return false;
+                        }
+                    } else {
+                        // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
+                        auto err = ("Client Connection closed from remote: " + clientAddrStr);
+                        _clientCloseQueue.push({ newClientSocketFd, false, err });
+                        _logger.log(LogLevel::Error, err);
+                        return false;
+                    }
+
+                    return true;
+                }
+            } catch(const std::exception& e) {
+                _logger.log(LogLevel::Error, "Handle connection: " + std::string(e.what()));
                 return false;
             }
-
-            auto clientAddrStr = extractIpAddrString(&clientAddr);
-
-            // Receive initial data from the client
-            std::vector<rsByte> recvBuffer(_config.recvBufferSize);
-            ssize_t bytesRead = recv(newClientSocketFd, &recvBuffer[0], _config.recvBufferSize, 0);
-            const std::string request(recvBuffer.begin(), recvBuffer.end());
-            if(bytesRead > 0) {
-                auto response = _serverConnectionHandler.handleHandshakeRequest(request);
-                std::vector<rsByte> respBytes(response.begin(), response.end());
-
-                // Set the client socket to non-blocking mode and add it to the epoll instance
-                fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
-                epoll_event event;
-                event.data.fd = newClientSocketFd;
-                event.events  = EPOLLIN | EPOLLET; // read events in edge-triggered mode
-                epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &event);
-
-                // Send the handshake response to the client and save the new client connection
-                const auto result = sendToSocket(newClientSocketFd, respBytes);
-                if(result.bytesSent >= 0) {
-                    ClientConnection newConnection { newClientSocketFd, clientAddr, clientAddrStr };
-                    _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
-                    _logger.log(LogLevel::Info, "Client Connection established: " + clientAddrStr);
-                    return true;
-                } else {
-                    auto err = ("Failed to send handshake response to client: " + clientAddrStr);
-                    _clientCloseQueue.push({ newClientSocketFd, false, err });
-                    _logger.log(LogLevel::Error, err);
-                }
-            } else {
-                // Close the connection in case recv returned 0, or a WebSocket/HTTP header was not found
-                auto err = ("Client Connection closed from remote: " + clientAddrStr);
-                _clientCloseQueue.push({ newClientSocketFd, false, err });
-                _logger.log(LogLevel::Error, err);
-            }
-
-            return true;
-        } catch(const std::exception& e) {
-            _logger.log(LogLevel::Error, "Handle connection: " + std::string(e.what()));
-            return false;
         }
     }
 
@@ -445,10 +476,8 @@ class Server {
             // (instead it will return -1 and set errno to EPIPE if the connection is broken)
             rsInt64 bytesSent = send(clientSocketfd, &sendBuf[totalBytesSent], sendBuf.size() - totalBytesSent, flags | MSG_NOSIGNAL);
             if(bytesSent == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                // The send would block, so wait a bit and try again
-                // Wait for 1 millisecond (1000 microseconds)
-                usleep(1000);
-                continue;
+                // No more data to write on the client socket
+                break;
             } else if(bytesSent == -1 && errno == EPIPE) {
                 // Handle broken pipe error
                 _logger.log(LogLevel::Error, "Broken pipe error: " + std::string(strerror(errno)));
@@ -481,10 +510,8 @@ class Server {
         // Receive incoming data, until there is no more data to read on the client socket
         while((bytesRecv = recv(clientSocketfd, &recvBuf[totalBytesRecv], recvBuf.size() - totalBytesRecv, rFlags)) > 0) {
             if(bytesRecv == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                // The recv would block, so wait a bit and try again
-                // Wait for 1 millisecond (1000 microseconds)
-                usleep(1000);
-                continue;
+                // No more data to read on the client socket
+                break;
             } else if(bytesRecv == -1 && errno == ECONNRESET) {
                 // Handle connection reset by peer
                 _logger.log(LogLevel::Error, "Connection reset by peer: " + std::string(strerror(errno)));

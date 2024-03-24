@@ -4,6 +4,7 @@
 #include "types.hpp"
 
 #include <string>
+#include <sys/epoll.h>
 #include <sys/socket.h>
 
 namespace reServ::Client {
@@ -16,13 +17,11 @@ struct ClientConnection {
     const int clientSocketfd;
     const sockaddr_storage clientAddr;
     const std::string clientAddrStr;
-    // Variable Connection data
-    rsUInt64 lastPingTimestamp = 0;
-    bool awaitingPong          = false;
+    const epoll_event epollEvent;
 
   public:
-    ClientConnection(int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr) :
-      clientSocketfd(clientSocketfd), clientAddr(clientAddr), clientAddrStr(clientAddrStr) {}
+    ClientConnection(const int clientSocketfd, const sockaddr_storage& clientAddr, const std::string& clientAddrStr, const epoll_event& epollEvent) :
+      clientSocketfd(clientSocketfd), clientAddr(clientAddr), clientAddrStr(clientAddrStr), epollEvent(epollEvent) {}
 
     ~ClientConnection() = default;
 };
