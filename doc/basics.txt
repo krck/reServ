@@ -54,3 +54,44 @@ Here are the general steps to create a WebSocket-based chat application in C++:
 Here is a great Socket Guide:
 https://beej.us/guide/bgnet/html/#intro
 https://eklitzke.org/blocking-io-nonblocking-io-and-epoll
+
+
+
+
+
+
+The epoll mechanism in Linux is designed to handle multiple I/O events asynchronously. 
+It allows you to register multiple file descriptors (like sockets) and will notify you when I/O is ready on any of them, 
+without blocking your program in the meantime.
+
+When you call epoll_wait, it will return any events that are ready. 
+If no events are ready, it will wait until at least one is ready. 
+But while it's waiting, your program is free to do other things. 
+This is the essence of asynchronous I/O: your program doesn't block waiting for I/O, but instead can handle I/O whenever it's ready.
+
+However, it's important to note that while epoll itself is asynchronous, 
+the I/O operations you perform when an event is ready (like read or write on a socket) are typically blocking operations. 
+To perform these operations asynchronously as well, you would need to use non-blocking I/O (by setting the O_NONBLOCK flag on your sockets), 
+or offload these operations to another thread or process.
+
+Epoll with Thread Pools:
+
+Advantages:
+Concurrency: By using multiple threads, the server can take advantage of multiple cores and handle more connections simultaneously.
+Simplicity: Compared to asynchronous I/O, multi-threaded programming can be simpler to understand because each thread can be written in a straightforward, 
+sequential manner.
+
+Disadvantages:
+Overhead: Creating and managing threads has overhead. If not managed properly, too many threads can lead to context-switching overhead and memory consumption.
+Synchronization: Shared resources must be protected with locks, which can lead to contention and potential deadlocks
+
+
+Using epoll with non-blocking I/O (O_NONBLOCK) and thread pools can be a very 
+effective way to build a high-performance and scalable WebSocket server in C++ on Linux.
+
+This approach allows you to handle multiple connections simultaneously (thanks to epoll and non-blocking I/O) 
+and to take advantage of multiple cores (thanks to thread pools).
+
+However, it's important to note that this approach also adds complexity to your program. You'll need to carefully 
+manage your threads and handle the asynchronous nature of non-blocking I/O. You'll also need to handle potential 
+race conditions and ensure that shared resources are properly synchronized.

@@ -64,17 +64,16 @@ Install the docker engine with [this official guide](https://docs.docker.com/eng
 
 ### 4.1 Basic WebSocket Server Features
 
-- [x] **Finish the Core Logic: Input**: Fully implement the WebSocket Protocol and correctly parse messages
-- [x] **Finish the Core Logic: Connection**: Update the connection logic, allow for endpoint handling
-- [ ] **Finish the Core Logic: Output**: Implement a basic (default) output that includes "echo" and "broadcast"
-- [ ] **Finish the Core Logic: WebSocket Protocol**: Handle all basic WebSocket functionalities, as specified by the Protocol
+- [ ] **Autobahn verification/implementation: Connection**: Update the connection logic, allow for endpoint handling
+- [ ] **Autobahn verification/implementation: Input**: Fully implement the WebSocket Protocol and correctly parse messages
+- [ ] **Autobahn verification/implementation: Output**: Implement a basic (default) output that includes "echo" and "broadcast"
+- [ ] **Autobahn verification/implementation: Ping/Pong Frames**: Check if the connection is still alive by adding the WS ping/pong implementation
+- [ ] **Autobahn verification/implementation: Binary and Text Data Handling**: Handle both binary and text data as incoming messages (WS supports both)
 - [ ] **Finish the Core Logic: Tests**: : Unit Tests for all parts of the Core Logic!
+- [ ] **Message Size Limiting**: Limit the size of incoming messages to prevent server overload
 - [ ] **Load Balancing**: Vertical/Internal Load Balancing by adding concurrency (threat pools) 
 - [ ] **Message Rate Limiting**: Prevent clients from spamming a high volume of messages
 - [ ] **Connection Limiting**: Restrict the number of concurrent WebSocket connections from a single client
-- [ ] **Ping/Pong Frames**: Check if the connection is still alive by adding the WS ping/pong implementation
-- [ ] **Binary and Text Data Handling**: Handle both binary and text data as incoming messages (WS supports both)
-- [ ] **Message Size Limiting**: Limit the size of incoming messages to prevent server overload
 - [ ] **Compression**: Reduce the size of data being transmitted (WebSocket protocol supports per-message compression!)
 - [ ] **Logging and Monitoring**: Better logs and real-time monitoring capabilities (access logging, audit logging)
 - [ ] **Origin Checks**: Verifies the origin of WebSocket requests (prevent cross-site WebSocket hijacking)
