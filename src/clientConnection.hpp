@@ -33,7 +33,9 @@ class ClientConnection {
 
     inline void setHandshakeStarted() { _clientState = ClientWebSocketState::Handshake; }
     inline void setHandshakeCompleted() { _clientState = ClientWebSocketState::Open; }
-    inline void setClosing() { _clientState = ClientWebSocketState::Closing; }
+    inline void setClosing(bool fromClient) {
+        _clientState = (fromClient ? ClientWebSocketState::ClosingClientTrigger : ClientWebSocketState::ClosingServerTrigger);
+    }
 
     ~ClientConnection() {
         _logger.log(LogLevel::Debug, ("Client connection closed: " + clientAddrStr));

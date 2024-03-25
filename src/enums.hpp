@@ -20,7 +20,9 @@ enum class ClientWebSocketState {
     Created,
     Handshake,
     Open,
-    Closing,
+    ClosingServerTrigger,
+    ClosingClientTrigger,
+    ClosingServerWait,
     Closed
 };
 

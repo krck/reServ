@@ -58,10 +58,10 @@ https://eklitzke.org/blocking-io-nonblocking-io-and-epoll
 
 CLIENT STATES
 
-Old State	    Action	                New State	    Comment
-___________________________________________________________________________________________________
----	            Accept FAIL             ---	            No need to close – Was not opened
----     	    Accept OK	            CREATED	
+Old State	    Action	                New State	    Comment                                     State
+____________________________________________________________________________________________________________
+---	            Accept FAIL             ---	            No need to close – Was not opened           DONE
+---     	    Accept OK	            CREATED	                                                    DONE
 CREATED	        Receive Handshake FAIL	---	            Close socket – No Close message
 CREATED	        Receive Handshake OK	HANDSHAKE	
 HANDSHAKE	    Send Handshake FAIL	    ---	            Close socket – No Close message

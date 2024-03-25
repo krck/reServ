@@ -82,7 +82,7 @@ class ServerOutputHandler {
         }
     }
 
-    std::vector<rsByte> generateWsCloseFrame(rsUInt16 statusCode) const {
+    std::vector<rsByte> generateWsCloseFrame(rsUInt16 statusCode, std::string&& reason) const {
         std::vector<rsByte> frame;
         frame.reserve(_config.frameHeaderSize + 2); // 2 bytes for the status code
 
