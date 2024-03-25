@@ -171,24 +171,49 @@ class Server {
                     // No more new connections to accept on the main socket
                     break;
                 } else if(newClientSocketFd >= 0) {
-                    ClientConnection newConnection { _epollfd, newClientSocketFd, clientAddr };
-                    if(newConnection.getState() == ClientWebSocketState::Created) {
-                        std::vector<rsByte> recvBuf;
-                        auto result = recvFromSocket(newClientSocketFd, recvBuf);
-                        if(result.bytesRecv > 0) {
-                            // On a newly created connection the first message received MUST be a HTTP WebSocket upgrade request
-                            auto httpResponse = _serverConnectionHandler.handleHandshakeRequest(std::string(recvBuf.begin(), recvBuf.end()));
-                            std::vector<rsByte> responseBytes(httpResponse.begin(), httpResponse.end());
-
-                            auto message = std::make_unique<Message>(newClientSocketFd, responseBytes.size(), OutputMethod::Echo, responseBytes);
-                            _clientMessageQueue.push(std::move(message));
-                            newConnection.setHandshakeStarted();
-
-                            _clientConnections.insert({ newClientSocketFd, std::make_unique<ClientConnection>(newConnection) });
-                        }
+                    // Extract the client IP address as readable string
+                    std::string clientAddrStr;
+                    if(clientAddr.ss_family == AF_INET) {
+                        // IP v4 Address
+                        struct sockaddr_in* addr_v4 = (struct sockaddr_in*)&clientAddr;
+                        clientAddrStr               = std::string(inet_ntoa(addr_v4->sin_addr));
+                    } else {
+                        // IP v6 Address
+                        char a[INET6_ADDRSTRLEN] { '\0' };
+                        struct sockaddr_in6* addr_v6 = (struct sockaddr_in6*)&clientAddr;
+                        inet_ntop(AF_INET6, &(addr_v6->sin6_addr), a, INET6_ADDRSTRLEN);
+                        clientAddrStr = std::string(a);
                     }
+                    if(clientAddrStr.empty()) {
+                        _logger.log(LogLevel::Error, "Failed to extract client IP address");
+                        continue;
+                    }
+
+                    // Set the client socket to non-blocking mode
+                    if(fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK) < 0) {
+                        _logger.log(LogLevel::Error, ("Failed to set new client socket to non-blocking mode: " + clientAddrStr));
+                        continue;
+                    }
+
+                    // Add the new client socket to the epoll instance
+                    epoll_event epollEvent {};
+                    epollEvent.data.fd = newClientSocketFd;
+                    epollEvent.events  = EPOLLIN | EPOLLET; // read events in edge-triggered mode
+                    if(epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &epollEvent) < 0) {
+                        _logger.log(LogLevel::Error, ("Failed to add new client to epoll instance: " + clientAddrStr));
+                        continue;
+                    }
+
+                    auto newConnection = std::make_unique<ClientConnection>(newClientSocketFd, _epollfd, clientAddrStr, clientAddr, epollEvent);
+                    if(newConnection->getState() == ClientWebSocketState::Created) {
+                        _logger.log(LogLevel::Debug, ("New client connection created: " + clientAddrStr));
+                        _clientConnections.insert({ newClientSocketFd, std::move(newConnection) });
+                    }
+                    // If the connection was not setup properly and moved to _clientConnections
+                    // it will be automatically closed and deleted here (no close frame needed)
                 } else {
                     _logger.log(LogLevel::Error, "Failed to accept new client connection");
+                    continue;
                 }
             }
             return true;
@@ -224,7 +249,15 @@ class Server {
                 return false;
             }
 
-            if(client->getState() == ClientWebSocketState::Open) {
+            if(client->getState() == ClientWebSocketState::Created) {
+                // On a newly created connection the first message received MUST be a HTTP WebSocket upgrade request
+                auto httpResponse = _serverConnectionHandler.handleHandshakeRequest(std::string(recvBuf.begin(), recvBuf.end()));
+                std::vector<rsByte> responseBytes(httpResponse.begin(), httpResponse.end());
+
+                auto message = std::make_unique<Message>(client->clientSocketfd, responseBytes.size(), OutputMethod::Echo, responseBytes);
+                _clientMessageQueue.push(std::move(message));
+                client->setHandshakeStarted();
+            } else if(client->getState() == ClientWebSocketState::Open) {
                 // ---------------------------------------------- CREATE NEW MESSAGE -----------------------------------------------
                 // -- If no uncompleted segment exists, then this is the beginning of a new message and the header must be parsed --
                 // -----------------------------------------------------------------------------------------------------------------
@@ -346,9 +379,10 @@ class Server {
                     _clientMessageQueue.push(std::move(_messageSegmentationBuffer[client->clientSocketfd]));
                     _messageSegmentationBuffer.erase(client->clientSocketfd);
                 }
-            }
 
-            return true;
+                return true;
+            }
+            return false;
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
             auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::ABNORMAL_CLOSURE);
@@ -369,18 +403,24 @@ class Server {
             return false;
         }
 
-        const auto& client = _clientConnections[message->clientSocketfd];
+        auto& client = _clientConnections[message->clientSocketfd];
         try {
             if(client->getState() == ClientWebSocketState::Handshake) {
                 // If its still the Handshake: Just send the "raw" bytes, no frame/header
                 // (and always just send it as an Echo back to the client)
                 const auto result = sendToSocket(message->clientSocketfd, message->getPayload());
-                _logger.log(LogLevel::Debug, "Handshake message sent: " + std::to_string(result.bytesSent));
                 if(result.state != SocketState::OK) {
-                    // throw std::runtime_error("Failed to send message to client: " + clientIter->second->clientAddrStr);
-                    // ...
+                    _logger.log(LogLevel::Debug, "Failed to send message to client: " + client->clientAddrStr);
+                    auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::PROTOCOL_ERROR);
+                    auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
+                    _clientMessageQueue.push(std::move(message));
+                    client->setClosing();
+                    return false;
+                } else {
+                    _logger.log(LogLevel::Debug, "Handshake message sent: " + client->clientAddrStr);
+                    client->setHandshakeCompleted();
+                    return true;
                 }
-                return true;
             } else {
                 // The connection is open or closing: Send the message as a WebSocket frame
                 // (Based on the input message, generate a output message)

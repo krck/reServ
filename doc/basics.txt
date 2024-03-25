@@ -56,9 +56,32 @@ https://beej.us/guide/bgnet/html/#intro
 https://eklitzke.org/blocking-io-nonblocking-io-and-epoll
 
 
+CLIENT STATES
+
+Old State	    Action	                New State	    Comment
+___________________________________________________________________________________________________
+---	            Accept FAIL             ---	            No need to close – Was not opened
+---     	    Accept OK	            CREATED	
+CREATED	        Receive Handshake FAIL	---	            Close socket – No Close message
+CREATED	        Receive Handshake OK	HANDSHAKE	
+HANDSHAKE	    Send Handshake FAIL	    ---	            Close socket – No Close message
+HANDSHAKE	    Send Handshake OK	    OPEN	
+OPEN	        Receive Data OK	        OPEN	
+OPEN	        Send Data OK	        OPEN	
+OPEN	        Receive Data FAIL	    CLOSING STS	    Server Trigger Start
+OPEN	        Send Data FAIL	        CLOSING STS	    Server Trigger Start
+OPEN	        Receive Close Request	CLOSING CTS	    Client Trigger Start
+CLOSING CTS	    Send Close FAIL	        ---	            Close socket – No (further) Close message
+CLOSING CTS	    Send Close OK	        ---	            Close socket
+CLOSING STS	    Send Close FAIL	        ---	            Close socket – No (further) Close message
+CLOSING STS	    Send Close OK	        CLOSING STW	    Server Trigger Wait
+CLOSING STW	    Receive Close OK	    ---	            Close socket
+CLOSING STW	    Receive Close FAIL	    ---	            Close socket
 
 
 
+
+EPOLL, ASYNC AND MULTI THREADING
 
 The epoll mechanism in Linux is designed to handle multiple I/O events asynchronously. 
 It allows you to register multiple file descriptors (like sockets) and will notify you when I/O is ready on any of them, 

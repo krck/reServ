@@ -21,8 +21,7 @@ enum class ClientWebSocketState {
     Handshake,
     Open,
     Closing,
-    Closed,
-    Error
+    Closed
 };
 
 // Handshake validation results
