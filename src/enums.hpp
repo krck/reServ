@@ -23,7 +23,7 @@ enum class ClientWebSocketState {
     ClosingServerTrigger,
     ClosingClientTrigger,
     ClosingServerWait,
-    Closed
+    // Closed - Not needed, Client will be cleaned up immediately
 };
 
 // Handshake validation results

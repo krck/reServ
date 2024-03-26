@@ -25,7 +25,7 @@ class ClientConnection {
     ClientConnection(rsSocketFd clientSocketfd, rsSocketFd mainEpollFd, const std::string& clientAddrStr, const sockaddr_storage& clientAddr,
                      const epoll_event epollEvent) :
       clientSocketfd(clientSocketfd),
-      _mainEpollFd(mainEpollFd), clientAddrStr(clientAddrStr), _clientAddr(clientAddr), _clientEpollEvent(epollEvent),
+      clientAddrStr(clientAddrStr), _mainEpollFd(mainEpollFd), _clientAddr(clientAddr), _clientEpollEvent(epollEvent),
       _clientState(ClientWebSocketState::Created), _logger(Logger::instance()) {}
 
     inline bool isState(const ClientWebSocketState state) const { return (_clientState == state); }
@@ -33,9 +33,9 @@ class ClientConnection {
 
     inline void setHandshakeStarted() { _clientState = ClientWebSocketState::Handshake; }
     inline void setHandshakeCompleted() { _clientState = ClientWebSocketState::Open; }
-    inline void setClosing(bool fromClient) {
-        _clientState = (fromClient ? ClientWebSocketState::ClosingClientTrigger : ClientWebSocketState::ClosingServerTrigger);
-    }
+    inline void setClosingFromServer() { _clientState = ClientWebSocketState::ClosingServerTrigger; }
+    inline void setClosingFromClient() { _clientState = ClientWebSocketState::ClosingClientTrigger; }
+    inline void setCloseWaitForClient() { _clientState = ClientWebSocketState::ClosingServerWait; }
 
     ~ClientConnection() {
         _logger.log(LogLevel::Debug, ("Client connection closed: " + clientAddrStr));

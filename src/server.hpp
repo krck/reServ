@@ -231,24 +231,15 @@ class Server {
             std::vector<rsByte> recvBuf;
             auto result = recvFromSocket(client->clientSocketfd, recvBuf);
 
-            // In case of "recv" Error: Send a WebSocket close frame back to the client
+            // In case of "recv" Error: Initiate the connection close procedure
             if(result.bytesRecv == 0 || result.state == SocketState::ConnectionClose) {
-                auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::NORMAL_CLOSURE);
-                auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                _clientMessageQueue.push(std::move(message));
-                client->setClosing();
+                coreConnectionCloseHandler(client, WsCloseCode::NORMAL_CLOSURE);
                 return false;
             } else if(result.state == SocketState::MaxLengthExceeded) {
-                auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::MESSAGE_TOO_BIG);
-                auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                _clientMessageQueue.push(std::move(message));
-                client->setClosing();
+                coreConnectionCloseHandler(client, WsCloseCode::MESSAGE_TOO_BIG);
                 return false;
             } else if(result.state == SocketState::ConnectionReset || result.state == SocketState::Undefined) {
-                auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::ABNORMAL_CLOSURE);
-                auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                _clientMessageQueue.push(std::move(message));
-                client->setClosing();
+                coreConnectionCloseHandler(client, WsCloseCode::ABNORMAL_CLOSURE);
                 return false;
             }
 
@@ -270,10 +261,7 @@ class Server {
                     // Validate if we have a complete WebSocket frame
                     // (must be at least two bytes for a basic header)
                     if(bytesRecv < 2) {
-                        auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::PROTOCOL_ERROR);
-                        auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                        _clientMessageQueue.push(std::move(message));
-                        client->setClosing();
+                        coreConnectionCloseHandler(client, WsCloseCode::PROTOCOL_ERROR);
                         return false;
                     }
 
@@ -292,19 +280,13 @@ class Server {
                     if(!maskBitSet) {
                         // The server MUST close the connection upon receiving a frame with the mask bit set to 0
                         // (The client MUST always set the mask bit to 1, as defined in the RFC)
-                        auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::PROTOCOL_ERROR);
-                        auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                        _clientMessageQueue.push(std::move(message));
-                        client->setClosing();
+                        coreConnectionCloseHandler(client, WsCloseCode::PROTOCOL_ERROR);
                         return false;
                     }
 
                     // Validate further: Header must have enough bytes for the extended payload length
                     if((tmpPayloadLength == 126 && (bytesRecv < 4)) || (tmpPayloadLength == 127 && (bytesRecv < 10))) {
-                        auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::PROTOCOL_ERROR);
-                        auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                        _clientMessageQueue.push(std::move(message));
-                        client->setClosing();
+                        coreConnectionCloseHandler(client, WsCloseCode::PROTOCOL_ERROR);
                         return false;
                     }
 
@@ -335,10 +317,7 @@ class Server {
 
                     // Validate further: Header must have enough bytes for the Masking-Key (MUST be set from Client)
                     if(bytesRecv < (headerFrameSize + 4UL)) {
-                        auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::PROTOCOL_ERROR);
-                        auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                        _clientMessageQueue.push(std::move(message));
-                        client->setClosing();
+                        coreConnectionCloseHandler(client, WsCloseCode::PROTOCOL_ERROR);
                         return false;
                     }
 
@@ -379,8 +358,14 @@ class Server {
 
                 // Check if the message is complete and can be processed
                 if(message->isReceived()) {
-                    _clientMessageQueue.push(std::move(_messageSegmentationBuffer[client->clientSocketfd]));
-                    _messageSegmentationBuffer.erase(client->clientSocketfd);
+                    if(message->opc == WsFrame_OPC::CLOSE) {
+                        // In case of a close frame recv from the Client, initiate the connection close procedure
+                        coreConnectionCloseHandler(client, WsCloseCode::NORMAL_CLOSURE, true);
+                    } else {
+                        // In case of a data frame, process the message and send it to the output handler
+                        _clientMessageQueue.push(std::move(_messageSegmentationBuffer[client->clientSocketfd]));
+                        _messageSegmentationBuffer.erase(client->clientSocketfd);
+                    }
                 }
 
                 return true;
@@ -388,12 +373,9 @@ class Server {
             return false;
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
-            auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::ABNORMAL_CLOSURE);
-            auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-            _clientMessageQueue.push(std::move(message));
+            coreConnectionCloseHandler(client, WsCloseCode::ABNORMAL_CLOSURE);
 
             _messageSegmentationBuffer.erase(client->clientSocketfd);
-            client->setClosing();
 
             _logger.log(LogLevel::Error, "Handle input: " + std::string(e.what()));
             return false;
@@ -409,20 +391,39 @@ class Server {
         auto& client = _clientConnections[message->clientSocketfd];
         try {
             if(client->getState() == ClientWebSocketState::Handshake) {
-                // If its still the Handshake: Just send the "raw" bytes, no frame/header
-                // (and always just send it as an Echo back to the client)
+                // SPECIAL CASE Handshake:
+                // Just send the "raw" bytes, no frame/header (and always just send it as an Echo back to the client)
                 const auto result = sendToSocket(message->clientSocketfd, message->getPayload());
-                if(result.state != SocketState::OK) {
-                    _logger.log(LogLevel::Debug, "Failed to send message to client: " + client->clientAddrStr);
-                    auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::PROTOCOL_ERROR);
-                    auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                    _clientMessageQueue.push(std::move(message));
-                    client->setClosing();
-                    return false;
-                } else {
+                if(result.state == SocketState::OK) {
                     _logger.log(LogLevel::Debug, "Handshake message sent: " + client->clientAddrStr);
                     client->setHandshakeCompleted();
                     return true;
+                } else {
+                    _logger.log(LogLevel::Debug, "Failed to send handshake to client: " + client->clientAddrStr);
+                    coreConnectionCloseHandler(client.get(), WsCloseCode::PROTOCOL_ERROR);
+                    return false;
+                }
+            } else if(client->getState() == ClientWebSocketState::ClosingServerTrigger ||
+                      client->getState() == ClientWebSocketState::ClosingClientTrigger) {
+                // SPECIAL CASE Closing:
+                // Just send the "raw" bytes, since the closing message was already wrapped in a WS frame
+                const auto result = sendToSocket(message->clientSocketfd, message->getPayload());
+                if(result.state == SocketState::OK) {
+                    _logger.log(LogLevel::Debug, "Close message sent: " + client->clientAddrStr);
+                    if(client->getState() == ClientWebSocketState::ClosingServerTrigger) {
+                        // If the close was triggered from the Server and the Message could be send:
+                        // Set the state to "Wait for Client" to receive the closing handshake
+                        client->setCloseWaitForClient();
+                    } else {
+                        // If the close was triggered from the Client and the Message could be send:
+                        // The closing handshake is now completed and the client can be removed
+                        coreConnectionCloseHandler(client.get(), WsCloseCode::NORMAL_CLOSURE);
+                    }
+                    return true;
+                } else {
+                    _logger.log(LogLevel::Debug, "Failed to send close to client: " + client->clientAddrStr);
+                    coreConnectionCloseHandler(client.get(), WsCloseCode::PROTOCOL_ERROR);
+                    return false;
                 }
             } else {
                 // The connection is open or closing: Send the message as a WebSocket frame
@@ -459,87 +460,76 @@ class Server {
                     return true;
                 } else {
                     // Close the connection in case the output handler returned a WsCloseCode
-                    auto closeFrame = _serverOutputHandler.generateWsCloseFrame(std::get<WsCloseCode>(result));
-                    auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                    _clientMessageQueue.push(std::move(message));
-                    client->setClosing();
+                    coreConnectionCloseHandler(client.get(), std::get<WsCloseCode>(result));
                     return false;
                 }
             }
         } catch(const std::exception& e) {
             // Close the connection in case recv returned 0 or a error was thrown
-            auto closeFrame = _serverOutputHandler.generateWsCloseFrame(WsCloseCode::ABNORMAL_CLOSURE);
-            auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-            _clientMessageQueue.push(std::move(message));
-            client->setClosing();
+            coreConnectionCloseHandler(client.get(), WsCloseCode::ABNORMAL_CLOSURE);
 
             _logger.log(LogLevel::Error, "Handle output: " + std::string(e.what()));
             return false;
         }
     }
 
-    //
-    // Old State	    Action	                New State	    Comment                                     State
-    // ____________________________________________________________________________________________________________
-    // ---	            Accept FAIL             ---	            No need to close – Was not opened           DONE
-    // ---     	        Accept OK	            CREATED	                                                    DONE
-    // CREATED	        Receive Handshake FAIL	---	            Close socket – No Close message
-    // CREATED	        Receive Handshake OK	HANDSHAKE
-    // HANDSHAKE	    Send Handshake FAIL	    ---	            Close socket – No Close message
-    // HANDSHAKE	    Send Handshake OK	    OPEN
-    // OPEN	            Receive Data OK	        OPEN
-    // OPEN	            Send Data OK	        OPEN
-    // OPEN	            Receive Data FAIL	    CLOSING STS	    Server Trigger Start - Send Close message
-    // OPEN	            Send Data FAIL	        CLOSING STS	    Server Trigger Start - Send Close message
-    // OPEN	            Receive Close Request	CLOSING CTS	    Client Trigger Start - Send Close message
-    // CLOSING CTS	    Send Close FAIL	        ---	            Close socket – No (further) Close message
-    // CLOSING CTS	    Send Close OK	        ---	            Close socket
-    // CLOSING STS	    Send Close FAIL	        ---	            Close socket – No (further) Close message
-    // CLOSING STS	    Send Close OK	        CLOSING STW	    Server Trigger - Wait for Close message
-    // CLOSING STW	    Receive Close OK	    ---	            Close socket
-    // CLOSING STW	    Receive Close FAIL	    ---	            Close socket
-    // ____________________________________________________________________________________________________________
-    //
-
     void coreConnectionCloseHandler(ClientConnection* const client, WsCloseCode closeCode, bool fromClient = false, std::string&& reason = "") {
-        if(client->getState() == ClientWebSocketState::Created || client->getState() == ClientWebSocketState::Handshake) {
-            // In case the connection was not fully established (Handshake not completed)
-            // just erase the client from the clientConnections map, which will close/cleanup
+        //
+        // Old State	    Action	                New State	    Comment                                     State
+        // ____________________________________________________________________________________________________________
+        // ---	            Accept FAIL             ---	            No need to close – Was not opened           DONE
+        // ---     	        Accept OK	            CREATED	                                                    DONE
+        // CREATED	        Receive Handshake FAIL	---	            Close socket – No Close message             DONE
+        // CREATED	        Receive Handshake OK	HANDSHAKE                                                   DONE
+        // HANDSHAKE	    Send Handshake FAIL	    ---	            Close socket – No Close message
+        // HANDSHAKE	    Send Handshake OK	    OPEN
+        // OPEN	            Receive Data OK	        OPEN                                                        DONE
+        // OPEN	            Send Data OK	        OPEN                                                        DONE
+        // OPEN	            Receive Data FAIL	    CLOSING STS	    Server Trigger Start - Send Close message   DONE
+        // OPEN	            Send Data FAIL	        CLOSING STS	    Server Trigger Start - Send Close message
+        // OPEN	            Receive Close Request	CLOSING CTS	    Client Trigger Start - Send Close message   DONE
+        // CLOSING CTS	    Send Close FAIL	        ---	            Close socket – No (further) Close message   DONE
+        // CLOSING CTS	    Send Close OK	        ---	            Close socket                                DONE
+        // CLOSING STS	    Send Close FAIL	        ---	            Close socket – No (further) Close message
+        // CLOSING STS	    Send Close OK	        CLOSING STW	    Server Trigger - Wait for Close message
+        // CLOSING STW	    Receive Close OK	    ---	            Close socket
+        // CLOSING STW	    Receive Close FAIL	    ---	            Close socket
+        // ____________________________________________________________________________________________________________
+        //
+        try {
+            if(client->getState() == ClientWebSocketState::Created || client->getState() == ClientWebSocketState::Handshake) {
+                // In case the connection was not fully established (Handshake not completed)
+                // just erase the client from the clientConnections map, which will close/cleanup
+                _clientConnections.erase(client->clientSocketfd);
+            } else if(client->getState() == ClientWebSocketState::Open && !fromClient) {
+                // In case the connection is open, but something went wrong on the server-end, send a close frame to the client
+                auto closeFrame = _serverOutputHandler.generateWsCloseFrame(closeCode, std::move(reason));
+                auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
+                _clientMessageQueue.push(std::move(message));
+                client->setClosingFromServer();
+            } else if(client->getState() == ClientWebSocketState::Open && fromClient) {
+                // In case the client wants to close the connection, send a close frame back to the client
+                auto closeFrame = _serverOutputHandler.generateWsCloseFrame(closeCode, std::move(reason));
+                auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
+                _clientMessageQueue.push(std::move(message));
+                client->setClosingFromClient();
+            } else if(client->getState() == ClientWebSocketState::ClosingClientTrigger) {
+                // If the client sent a close frame, but the server failed to send one back: Just erase the client
+                _clientConnections.erase(client->clientSocketfd);
+            } else if(client->getState() == ClientWebSocketState::ClosingServerTrigger) {
+                // If the server failed to send the initial close frame: Just erase the client
+                _clientConnections.erase(client->clientSocketfd);
+            } else if(client->getState() == ClientWebSocketState::ClosingServerWait) {
+                // If the server sent a close frame, but the client failed to send one back: Just erase the client
+                _clientConnections.erase(client->clientSocketfd);
+            } else {
+                // Should never be reached, but just in case: Erase the client
+                _clientConnections.erase(client->clientSocketfd);
+            }
+        } catch(const std::exception& e) {
+            // In case anything goes wrong: throw away (close) the connection "unclean"
             _clientConnections.erase(client->clientSocketfd);
-        } else if(client->getState() == ClientWebSocketState::Open) {
-            // In case the connection was open, send a close frame to the client
-            auto closeFrame = _serverOutputHandler.generateWsCloseFrame(closeCode, std::move(reason));
-            auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-            _clientMessageQueue.push(std::move(message));
-            client->setClosing();
-
-        } else if(client->getState() == ClientWebSocketState::ClosingCTS) {
-            // In case the client already sent a close frame, but the server did not yet
-            // (the client is waiting for the server to send a close frame back)
-
-            if(fromClient) {
-                // The client already sent a close frame, so the server should send one back
-                auto closeFrame = _serverOutputHandler.generateWsCloseFrame(closeCode, std::move(reason));
-                auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                _clientMessageQueue.push(std::move(message));
-                client->setClosing();
-            } else {
-                // The server already sent a close frame, so the client should close the connection
-                _clientConnections.erase(client->clientSocketfd);
-            }
-        } else if(client->getState() == ClientWebSocketState::ClosingSTS) {
-            // In case the server already sent a close frame, but the client did not yet
-            // (the server is waiting for the client to send a close frame back)
-            if(fromClient) {
-                // The client already sent a close frame, so the server should close the connection
-                _clientConnections.erase(client->clientSocketfd);
-            } else {
-                // The server already sent a close frame, so the client should send one back
-                auto closeFrame = _serverOutputHandler.generateWsCloseFrame(closeCode, std::move(reason));
-                auto message    = std::make_unique<Message>(client->clientSocketfd, closeFrame.size(), OutputMethod::Echo, closeFrame);
-                _clientMessageQueue.push(std::move(message));
-                client->setClosing();
-            }
+            _logger.log(LogLevel::Error, "Handle close: " + std::string(e.what()));
         }
     }
 
