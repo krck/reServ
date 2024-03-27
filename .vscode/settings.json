@@ -73,8 +73,10 @@
     "cSpell.words": [
         "addrinfos",
         "CONNECTIONHANDLER",
+        "EPOLLERR",
         "EPOLLET",
         "epollfd",
+        "EPOLLHUP",
         "EPOLLIN",
         "INPUTHANDLER",
         "RESERV",

@@ -19,17 +19,30 @@ using namespace reServ::Common;
 class ClientConnection {
   public:
     const rsSocketFd clientSocketfd;
-    const std::string clientAddrStr;
 
   public:
-    ClientConnection(rsSocketFd clientSocketfd, rsSocketFd mainEpollFd, const std::string& clientAddrStr, const sockaddr_storage& clientAddr,
-                     const epoll_event epollEvent) :
-      clientSocketfd(clientSocketfd),
-      clientAddrStr(clientAddrStr), _mainEpollFd(mainEpollFd), _clientAddr(clientAddr), _clientEpollEvent(epollEvent),
-      _clientState(ClientWebSocketState::Created), _logger(Logger::instance()) {}
+    ClientConnection(rsSocketFd clientSocketfd, rsSocketFd mainEpollFd, const sockaddr_storage& clientAddr) :
+      clientSocketfd(clientSocketfd), _mainEpollFd(mainEpollFd), _clientAddr(clientAddr), _logger(Logger::instance()) {
+        // Extract the client IP address as readable string
+        if(clientAddr.ss_family == AF_INET) {
+            // IP v4 Address
+            struct sockaddr_in* addr_v4 = (struct sockaddr_in*)&clientAddr;
+            _clientAddrStr              = std::string(inet_ntoa(addr_v4->sin_addr));
+        } else {
+            // IP v6 Address
+            char a[INET6_ADDRSTRLEN] { '\0' };
+            struct sockaddr_in6* addr_v6 = (struct sockaddr_in6*)&clientAddr;
+            inet_ntop(AF_INET6, &(addr_v6->sin6_addr), a, INET6_ADDRSTRLEN);
+            _clientAddrStr = std::string(a);
+        }
 
-    inline bool isState(const ClientWebSocketState state) const { return (_clientState == state); }
+        // Finally set the client state to created
+        _clientState = ClientWebSocketState::Created;
+    }
+
+    inline std::string getClientAddr() const { return _clientAddrStr; }
     inline ClientWebSocketState getState() const { return _clientState; }
+    inline bool isState(const ClientWebSocketState state) const { return (_clientState == state); }
 
     inline void setHandshakeStarted() { _clientState = ClientWebSocketState::Handshake; }
     inline void setHandshakeCompleted() { _clientState = ClientWebSocketState::Open; }
@@ -38,7 +51,7 @@ class ClientConnection {
     inline void setCloseWaitForClient() { _clientState = ClientWebSocketState::ClosingServerWait; }
 
     ~ClientConnection() {
-        _logger.log(LogLevel::Debug, ("Client connection closed: " + clientAddrStr));
+        _logger.log(LogLevel::Debug, ("Client connection closed: " + _clientAddrStr));
 
         // Shutdown the TCP/Socket connection (and remove the client from the epoll instance)
         epoll_ctl(_mainEpollFd, EPOLL_CTL_DEL, clientSocketfd, nullptr);
@@ -52,8 +65,8 @@ class ClientConnection {
   private:
     const rsSocketFd _mainEpollFd;
     const sockaddr_storage _clientAddr;
-    const epoll_event _clientEpollEvent;
     ClientWebSocketState _clientState;
+    std::string _clientAddrStr;
     Logger& _logger;
 };
 

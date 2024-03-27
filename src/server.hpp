@@ -36,28 +36,75 @@ class Server {
 
     bool run() {
         try {
-            // Create and bind the main server (listening) socket
-            if((_mainSocketfd = createAndBindMainServerSocket()) <= 0)
-                throw std::runtime_error("Failed to create and bind a socket");
+            // -------------------------------------------------------------------------------
+            // ---------------------- INITIALIZE THE MAIN SERVER SOCKET ----------------------
+            // -------------------------------------------------------------------------------
+            {
+                addrinfo* serverAddr;
+                addrinfo serverHints;
+                int socketOptions = 0;
+                int addrStatus    = 0;
 
-            // Put the Server socket in listening mode, waiting to accept new connections
-            // (If a connection request arrives when the backlog is full, it will get ECONNREFUSED)
-            if(listen(_mainSocketfd, _config.maxConnectionBacklog) < 0)
-                throw std::runtime_error("Failed to initialize listening");
+                // Helper struct for getaddrinfo() which will create the servers address configuration
+                std::memset(&serverHints, 0, sizeof(serverHints));
+                serverHints.ai_flags    = AI_PASSIVE;  // AI_PASSIVE to automatically fill in the server IP
+                serverHints.ai_family   = AF_UNSPEC;   // AF_UNSPEC to enable IPv4/IPv6
+                serverHints.ai_socktype = SOCK_STREAM; // TCP
 
-            // Create the epoll instance
-            if((_epollfd = epoll_create1(0)) < 0)
-                throw std::runtime_error("Failed to create epoll instance");
+                // Get the Servers IP address structures, based on the pre-configured "serverHints" (IPv4/IPv6, auto fill, TCP)
+                // (All the Servers IP addresses that match the hint config will be stored in a linked-list struct "_serverAddrList")
+                if((addrStatus = getaddrinfo(nullptr, std::to_string(_config.port).c_str(), &serverHints, &_serverAddrListFull)) != 0)
+                    throw std::runtime_error("Init: Failed to get system address structures");
 
-            epoll_event mainCtlEvent {};
-            mainCtlEvent.data.fd = _mainSocketfd;
-            mainCtlEvent.events  = EPOLLIN | EPOLLET;
-            if(epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &mainCtlEvent) < 0)
-                throw std::runtime_error("Failed to add main socket to epoll instance");
+                // Loop through all the Server IP address results and bind a new socket to the first possible
+                for(serverAddr = _serverAddrListFull; serverAddr != nullptr; serverAddr = serverAddr->ai_next) {
+                    // Create a new socket based on the current serverAddress, which was configured based on the "serverHints"
+                    if((_mainSocketfd = socket(serverAddr->ai_family, serverAddr->ai_socktype, serverAddr->ai_protocol)) < 0) {
+                        continue;
+                    }
+                    // Attach socket to the defined Port (forcefully - can prevent "Address already in use" errors)
+                    if(setsockopt(_mainSocketfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &socketOptions, sizeof(socketOptions)) < 0) {
+                        close(_mainSocketfd);
+                        continue;
+                    }
+                    // Bind socket to the local IP address and the configured Port/Protocol
+                    if(bind(_mainSocketfd, serverAddr->ai_addr, serverAddr->ai_addrlen) < 0) {
+                        close(_mainSocketfd);
+                        continue;
+                    }
+                    // In case a socket could be created and bound to a address,
+                    // stop the loop and use that socket as the main server socket
+                    break;
+                }
 
-            // -------------------------------------------------------------------------------------
-            // Start the MAIN EVENT LOOP (that currently can never finish, just crash via exception)
-            // -------------------------------------------------------------------------------------
+                if(serverAddr == nullptr || _mainSocketfd < 0)
+                    throw std::runtime_error("Init: Failed to create and bind a server socket");
+
+                // Set the server socket to non-blocking mode
+                // (For edge-triggered epoll, nonblocking sockets MUST be used)
+                if(fcntl(_mainSocketfd, F_SETFL, O_NONBLOCK) < 0)
+                    throw std::runtime_error("Init: Failed to set non-blocking mode on the server socket");
+
+                // Put the Server socket in listening mode, waiting to accept new connections
+                // (If a connection request arrives when the backlog is full, it will get ECONNREFUSED)
+                if(listen(_mainSocketfd, _config.maxConnectionBacklog) < 0)
+                    throw std::runtime_error("Init: Failed to initialize listening");
+
+                // Create the epoll instance
+                if((_epollfd = epoll_create1(0)) < 0)
+                    throw std::runtime_error("Init: Failed to create epoll instance");
+
+                // Setup epoll in edge-triggered (async/non-blocking) mode
+                epoll_event mainCtlEvent {};
+                mainCtlEvent.data.fd = _mainSocketfd;
+                mainCtlEvent.events  = EPOLLIN | EPOLLET;
+                if(epoll_ctl(_epollfd, EPOLL_CTL_ADD, _mainSocketfd, &mainCtlEvent) < 0)
+                    throw std::runtime_error("Init: Failed to add main socket to epoll instance");
+            }
+
+            // -------------------------------------------------------------------------------
+            // ---------------------- START THE MAIN SERVER EVENT LOOP -----------------------
+            // -------------------------------------------------------------------------------
             _logger.log(LogLevel::Info, "Server running: Main Socket listening on port " + std::to_string(_config.port));
             std::vector<epoll_event> events(_config.maxEpollEvents);
             while(true) {
@@ -106,117 +153,39 @@ class Server {
     }
 
   private:
-    rsSocketFd createAndBindMainServerSocket() {
-        addrinfo* serverAddr;
-        addrinfo serverHints;
-        rsSocketFd serverSocket = 0;
-        int socketOptions       = 0;
-        int addrStatus          = 0;
-
-        // Helper struct for getaddrinfo() which will create the servers address configuration
-        std::memset(&serverHints, 0, sizeof(serverHints));
-        serverHints.ai_flags    = AI_PASSIVE;  // AI_PASSIVE to automatically fill in the server IP
-        serverHints.ai_family   = AF_UNSPEC;   // AF_UNSPEC to enable IPv4/IPv6
-        serverHints.ai_socktype = SOCK_STREAM; // TCP
-
-        // Get the Servers IP address structures, based on the pre-configured "serverHints" (IPv4/IPv6, auto fill, TCP)
-        // (All the Servers IP addresses that match the hint config will be stored in a linked-list struct "_serverAddrList")
-        if((addrStatus = getaddrinfo(nullptr, std::to_string(_config.port).c_str(), &serverHints, &_serverAddrListFull)) != 0)
-            return -1;
-
-        // Loop through all the Server IP address results and bind a new socket to the first possible
-        for(serverAddr = _serverAddrListFull; serverAddr != nullptr; serverAddr = serverAddr->ai_next) {
-            // Create a new socket based on the current serverAddress, which was configured based on the "serverHints"
-            if((serverSocket = socket(serverAddr->ai_family, serverAddr->ai_socktype, serverAddr->ai_protocol)) < 0) {
-                continue;
-            }
-            // Attach socket to the defined Port (forcefully - can prevent "Address already in use" errors)
-            if(setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &socketOptions, sizeof(socketOptions)) < 0) {
-                close(serverSocket);
-                continue;
-            }
-            // Bind socket to the local IP address and the configured Port/Protocol
-            if(bind(serverSocket, serverAddr->ai_addr, serverAddr->ai_addrlen) < 0) {
-                close(serverSocket);
-                continue;
-            }
-            // In case a socket could be created and bound to a address,
-            // stop the loop and use that socket as the main server socket
-            break;
-        }
-
-        if(serverAddr == nullptr || serverSocket < 0)
-            return -1;
-
-        // Set the server socket to non-blocking mode
-        // (For edge-triggered epoll, nonblocking sockets MUST be used)
-        if(fcntl(serverSocket, F_SETFL, O_NONBLOCK) < 0) {
-            return -1;
-        }
-
-        return serverSocket;
-    }
-
     bool coreConnectionCreateHandler() {
         try {
+            sockaddr_storage newClientAddr = {};
+            socklen_t newClientAddrSize    = sizeof(newClientAddr);
+
             // Accept all new connections on the main/listening socket
             // (creates a new client socket and establishes the connection)
             while(true) {
-                rsSocketFd newClientSocketFd = -1;
-                sockaddr_storage clientAddr  = {};
-                socklen_t clientAddrSize     = sizeof(clientAddr);
-
-                newClientSocketFd = accept(_mainSocketfd, (sockaddr*)&clientAddr, &clientAddrSize);
+                const rsSocketFd newClientSocketFd = accept(_mainSocketfd, (sockaddr*)&newClientAddr, &newClientAddrSize);
                 if(newClientSocketFd < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                     // No more new connections to accept on the main socket
                     break;
                 } else if(newClientSocketFd >= 0) {
-                    // Extract the client IP address as readable string
-                    std::string clientAddrStr;
-                    if(clientAddr.ss_family == AF_INET) {
-                        // IP v4 Address
-                        struct sockaddr_in* addr_v4 = (struct sockaddr_in*)&clientAddr;
-                        clientAddrStr               = std::string(inet_ntoa(addr_v4->sin_addr));
-                    } else {
-                        // IP v6 Address
-                        char a[INET6_ADDRSTRLEN] { '\0' };
-                        struct sockaddr_in6* addr_v6 = (struct sockaddr_in6*)&clientAddr;
-                        inet_ntop(AF_INET6, &(addr_v6->sin6_addr), a, INET6_ADDRSTRLEN);
-                        clientAddrStr = std::string(a);
-                    }
-                    if(clientAddrStr.empty()) {
-                        _logger.log(LogLevel::Error, "Failed to extract client IP address");
-                        close(newClientSocketFd);
-                        continue;
-                    }
+                    // Create directly, since cleanup (close + remove from epoll) will happen on deconstruction
+                    auto newConnection = std::make_unique<ClientConnection>(newClientSocketFd, _epollfd, newClientAddr);
 
-                    // Set the client socket to non-blocking mode
-                    if(fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK) < 0) {
-                        _logger.log(LogLevel::Error, ("Failed to set new client socket to non-blocking mode: " + clientAddrStr));
-                        close(newClientSocketFd);
-                        continue;
-                    }
-
-                    // Add the new client socket to the epoll instance
                     epoll_event epollEvent {};
                     epollEvent.data.fd = newClientSocketFd;
-                    epollEvent.events  = EPOLLIN | EPOLLET; // read events in edge-triggered mode
-                    if(epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &epollEvent) < 0) {
-                        _logger.log(LogLevel::Error, ("Failed to add new client to epoll instance: " + clientAddrStr));
-                        close(newClientSocketFd);
-                        continue;
-                    }
+                    epollEvent.events  = EPOLLIN | EPOLLET;
+                    // Set the client socket to non-blocking mode and add it to the epoll instance (edge-triggered)
+                    const int noblockRes = fcntl(newClientSocketFd, F_SETFL, O_NONBLOCK);
+                    const int epollRes   = epoll_ctl(_epollfd, EPOLL_CTL_ADD, newClientSocketFd, &epollEvent);
 
-                    auto newConnection = std::make_unique<ClientConnection>(newClientSocketFd, _epollfd, clientAddrStr, clientAddr, epollEvent);
-                    if(newConnection->getState() == ClientWebSocketState::Created) {
-                        _logger.log(LogLevel::Debug, ("New client connection created: " + clientAddrStr));
+                    // If the connection is not setup properly and is not moved out to _clientConnections
+                    // the socket will be closed and deleted at the end of this scope automatically
+                    if(noblockRes >= 0 && epollRes >= 0 && (newConnection->getState() == ClientWebSocketState::Created)) {
+                        _logger.log(LogLevel::Debug, ("New client connection created: " + newConnection->getClientAddr()));
                         _clientConnections.insert({ newClientSocketFd, std::move(newConnection) });
+                    } else {
+                        _logger.log(LogLevel::Error, "Failed to setup new client connection");
                     }
-                    // If the connection was not setup properly and moved to _clientConnections
-                    // it will be automatically closed and deleted here (no close frame needed)
                 } else {
                     _logger.log(LogLevel::Error, "Failed to accept new client connection");
-                    continue;
                 }
             }
             return true;
@@ -395,11 +364,11 @@ class Server {
                 // Just send the "raw" bytes, no frame/header (and always just send it as an Echo back to the client)
                 const auto result = sendToSocket(message->clientSocketfd, message->getPayload());
                 if(result.state == SocketState::OK) {
-                    _logger.log(LogLevel::Debug, "Handshake message sent: " + client->clientAddrStr);
+                    _logger.log(LogLevel::Debug, "Handshake message sent: " + client->getClientAddr());
                     client->setHandshakeCompleted();
                     return true;
                 } else {
-                    _logger.log(LogLevel::Debug, "Failed to send handshake to client: " + client->clientAddrStr);
+                    _logger.log(LogLevel::Debug, "Failed to send handshake to client: " + client->getClientAddr());
                     coreConnectionCloseHandler(client.get(), WsCloseCode::PROTOCOL_ERROR);
                     return false;
                 }
@@ -409,19 +378,17 @@ class Server {
                 // Just send the "raw" bytes, since the closing message was already wrapped in a WS frame
                 const auto result = sendToSocket(message->clientSocketfd, message->getPayload());
                 if(result.state == SocketState::OK) {
-                    _logger.log(LogLevel::Debug, "Close message sent: " + client->clientAddrStr);
+                    _logger.log(LogLevel::Debug, "Close message sent: " + client->getClientAddr());
                     if(client->getState() == ClientWebSocketState::ClosingServerTrigger) {
                         // If the close was triggered from the Server and the Message could be send:
-                        // Set the state to "Wait for Client" to receive the closing handshake
+                        //
                         client->setCloseWaitForClient();
                     } else {
-                        // If the close was triggered from the Client and the Message could be send:
-                        // The closing handshake is now completed and the client can be removed
                         coreConnectionCloseHandler(client.get(), WsCloseCode::NORMAL_CLOSURE);
                     }
                     return true;
                 } else {
-                    _logger.log(LogLevel::Debug, "Failed to send close to client: " + client->clientAddrStr);
+                    _logger.log(LogLevel::Debug, "Failed to send close to client: " + client->getClientAddr());
                     coreConnectionCloseHandler(client.get(), WsCloseCode::PROTOCOL_ERROR);
                     return false;
                 }
@@ -474,28 +441,6 @@ class Server {
     }
 
     void coreConnectionCloseHandler(ClientConnection* const client, WsCloseCode closeCode, bool fromClient = false, std::string&& reason = "") {
-        //
-        // Old State	    Action	                New State	    Comment                                     State
-        // ____________________________________________________________________________________________________________
-        // ---	            Accept FAIL             ---	            No need to close – Was not opened           DONE
-        // ---     	        Accept OK	            CREATED	                                                    DONE
-        // CREATED	        Receive Handshake FAIL	---	            Close socket – No Close message             DONE
-        // CREATED	        Receive Handshake OK	HANDSHAKE                                                   DONE
-        // HANDSHAKE	    Send Handshake FAIL	    ---	            Close socket – No Close message
-        // HANDSHAKE	    Send Handshake OK	    OPEN
-        // OPEN	            Receive Data OK	        OPEN                                                        DONE
-        // OPEN	            Send Data OK	        OPEN                                                        DONE
-        // OPEN	            Receive Data FAIL	    CLOSING STS	    Server Trigger Start - Send Close message   DONE
-        // OPEN	            Send Data FAIL	        CLOSING STS	    Server Trigger Start - Send Close message
-        // OPEN	            Receive Close Request	CLOSING CTS	    Client Trigger Start - Send Close message   DONE
-        // CLOSING CTS	    Send Close FAIL	        ---	            Close socket – No (further) Close message   DONE
-        // CLOSING CTS	    Send Close OK	        ---	            Close socket                                DONE
-        // CLOSING STS	    Send Close FAIL	        ---	            Close socket – No (further) Close message
-        // CLOSING STS	    Send Close OK	        CLOSING STW	    Server Trigger - Wait for Close message
-        // CLOSING STW	    Receive Close OK	    ---	            Close socket
-        // CLOSING STW	    Receive Close FAIL	    ---	            Close socket
-        // ____________________________________________________________________________________________________________
-        //
         try {
             if(client->getState() == ClientWebSocketState::Created || client->getState() == ClientWebSocketState::Handshake) {
                 // In case the connection was not fully established (Handshake not completed)
